@@ -17,7 +17,7 @@ OpenWrt / ImmortalWrt / iStoreOS LuCI 插件：按局域网设备统计「谁访
 
 ## 截图
 
-截图已脱敏：局域网 IP → `192.168.1.x`，外网 IP → `203.0.113.x`，MAC 遮盖；设备名 → `Device-N`；右侧目的地 / 会话目标 / 设备卡片主目标中的真实域名与 ASN 组织名 → `serviceN.example.com` / `Cloud-Org-N`。
+截图已脱敏：局域网 IP → `192.168.1.x`，外网 IP → `203.0.113.x`，MAC 遮盖；设备名 → `Device-N`；目的地域名 / ASN 组织名 → `serviceN.example.com` / `Cloud-Org-N`；底部 LuCI / 主题 / 固件版本页脚已移除。
 
 ### 总览（拓扑 + 设备网格）
 
