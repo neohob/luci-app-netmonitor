@@ -6,7 +6,7 @@ LUCI_DEPENDS:=+luci-base +netmonitor
 LUCI_PKGARCH:=all
 
 PKG_NAME:=luci-app-netmonitor
-PKG_VERSION:=0.4.2
+PKG_VERSION:=0.4.3
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 

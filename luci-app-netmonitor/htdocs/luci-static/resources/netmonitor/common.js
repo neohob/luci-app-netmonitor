@@ -47,7 +47,7 @@ function errorText(code) {
 }
 
 function cssLink() {
-	var href = L.resource('netmonitor/netmonitor.css') + '?v=0.4.2-cal2';
+	var href = L.resource('netmonitor/netmonitor.css') + '?v=0.4.3-cal';
 	var existing = document.querySelector('link[data-netmonitor]');
 	if (existing) {
 		if (existing.getAttribute('href') !== href) existing.setAttribute('href', href);
