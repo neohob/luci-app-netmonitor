@@ -3,6 +3,9 @@
 local json = require 'netmonitor.json'
 local config = require 'netmonitor.config'
 local api = require 'netmonitor.api'
+local disk = require 'netmonitor.disk'
+local schema = require 'netmonitor.schema'
+local db = require 'netmonitor.db'
 
 if arg[1] == 'list' then
 	io.write(json.encode(api.METHODS))
@@ -10,7 +13,17 @@ elseif arg[1] == 'call' then
 	local input = io.read('*a') or ''
 	local args = {}
 	if input:match('%S') then args = json.decode(input) or {} end
-	local env = { cfg = config.load(), now = os.time() }
+	local cfg = config.load()
+	-- Ensure schema migrations (e.g. targets.source, ip_names) before API reads.
+	if cfg.db_path and cfg.db_path ~= '' then
+		local path = disk.db_file(cfg.db_path)
+		local f = io.open(path, 'r')
+		if f then
+			f:close()
+			pcall(schema.apply, path, db)
+		end
+	end
+	local env = { cfg = cfg, now = os.time() }
 	local res = api.call(arg[2], args, env)
 	io.write(json.encode(json.object(res)))
 end

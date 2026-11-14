@@ -91,6 +91,16 @@ function formatRate(bps) {
 	return formatBytes(bps) + '/s';
 }
 
+function formatUpDown(up, down) {
+	return '↑' + formatBytes(up) + ' ↓' + formatBytes(down);
+}
+
+function formatEdgeTip(e) {
+	var up = e.bytes_up, down = e.bytes_down;
+	if (up == null && down == null) return formatBytes(e.bytes_total);
+	return formatUpDown(up, down) + ' · ' + formatBytes(e.bytes_total);
+}
+
 function formatDuration(sec, interval) {
 	sec = Math.max(0, Math.round(Number(sec) || 0));
 	if (sec < (interval || 5)) return '约 <' + (interval || 5) + '秒';
@@ -139,6 +149,8 @@ return baseclass.extend({
 	flowDuration: flowDuration,
 	formatBytes: formatBytes,
 	formatRate: formatRate,
+	formatUpDown: formatUpDown,
+	formatEdgeTip: formatEdgeTip,
 	formatDuration: formatDuration,
 	formatClock: formatClock,
 	rangeLabel: rangeLabel,

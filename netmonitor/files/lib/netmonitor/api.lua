@@ -73,7 +73,7 @@ end
 
 local function pair_rows(path, since)
 	return q(path, string.format([[
-SELECT s.device, s.target, s.up, s.down, d.ip, d.hostname, t.display, t.unresolved
+SELECT s.device, s.target, s.up, s.down, d.ip, d.hostname, t.display, t.unresolved, t.source
 FROM (SELECT device, target, SUM(bytes_up) AS up, SUM(bytes_down) AS down
       FROM traffic_samples WHERE ts >= %s GROUP BY device, target) s
 LEFT JOIN devices d ON d.mac = s.device
@@ -135,6 +135,13 @@ function M.status(args, env)
 		for _, w in ipairs(out.warnings) do if w == dh.warning then dup = true end end
 		if not dup then out.warnings[#out.warnings + 1] = dh.warning end
 	end
+	out.sni = st.sni or { enabled = (tonumber(cfg.sni_enable) or 1) ~= 0,
+		available = false, mode = 'dns_only' }
+	if out.sni.enabled and not out.sni.available then
+		local dup = false
+		for _, w in ipairs(out.warnings) do if w == 'sni_unavailable' then dup = true end end
+		if not dup then out.warnings[#out.warnings + 1] = 'sni_unavailable' end
+	end
 	return out
 end
 
@@ -149,7 +156,8 @@ function M.topology(args, env)
 			rows[#rows + 1] = { device = r.device, target = r.target,
 				up = tonumber(r.up) or 0, down = tonumber(r.down) or 0 }
 			info.devices[r.device] = { ip = r.ip, hostname = r.hostname }
-			info.targets[r.target] = { display = r.display, unresolved = tonumber(r.unresolved) }
+			info.targets[r.target] = { display = r.display, unresolved = tonumber(r.unresolved),
+				source = r.source or ((tonumber(r.unresolved) == 1) and 'ip' or 'dns') }
 		end
 		local c = q(path, 'SELECT COUNT(*) AS n FROM traffic_samples WHERE ts >= ' .. db.quote(since) .. ';')[1] or {}
 		stats = storage_stats(path)
@@ -397,7 +405,7 @@ M.METHODS = {
 	check_path = { path = '/mnt/usb' },
 	prepare_path = { path = '/mnt/usb' },
 	set_config = { db_path = '/mnt/usb', interval = 5, idle_gap = 60,
-		retention_value = 30, retention_unit = 'day', enabled = 1, confirm = true },
+		retention_value = 30, retention_unit = 'day', enabled = 1, sni_enable = 1, confirm = true },
 	collector = { action = 'start' },
 }
 

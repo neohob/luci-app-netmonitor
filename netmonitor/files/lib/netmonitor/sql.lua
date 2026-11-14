@@ -12,12 +12,32 @@ function M.upsert_device(mac, ip, hostname, first_seen, last_seen)
 		q(mac), q(ip), q(hostname), q(first_seen), q(last_seen))
 end
 
-function M.upsert_target(key, kind, display, ip, unresolved)
+function M.upsert_target(key, kind, display, ip, unresolved, source, resolved_at)
+	local q = db.quote
+	source = source or ((tonumber(unresolved) == 0) and 'dns' or 'ip')
+	local ra = resolved_at and q(resolved_at) or 'NULL'
+	return string.format(
+		'INSERT INTO targets(key, kind, display, ip, unresolved, source, resolved_at) '
+		.. 'VALUES (%s, %s, %s, %s, %s, %s, %s) '
+		.. 'ON CONFLICT(key) DO UPDATE SET ip = COALESCE(excluded.ip, targets.ip), '
+		.. 'display = CASE WHEN excluded.unresolved = 0 THEN excluded.display ELSE targets.display END, '
+		.. 'kind = CASE WHEN excluded.unresolved = 0 THEN excluded.kind ELSE targets.kind END, '
+		.. 'unresolved = MIN(targets.unresolved, excluded.unresolved), '
+		.. 'source = CASE WHEN excluded.unresolved = 0 THEN excluded.source ELSE targets.source END, '
+		.. 'resolved_at = CASE WHEN excluded.unresolved = 0 THEN excluded.resolved_at ELSE targets.resolved_at END;',
+		q(key), q(kind), q(display), q(ip), q(unresolved), q(source), ra)
+end
+
+function M.upsert_ip_name(ip, name, source, updated_at)
 	local q = db.quote
 	return string.format(
-		'INSERT INTO targets(key, kind, display, ip, unresolved) VALUES (%s, %s, %s, %s, %s) '
-		.. 'ON CONFLICT(key) DO UPDATE SET ip = excluded.ip;',
-		q(key), q(kind), q(display), q(ip), q(unresolved))
+		'INSERT INTO ip_names(ip, name, source, updated_at) VALUES (%s, %s, %s, %s) '
+		.. 'ON CONFLICT(ip) DO UPDATE SET '
+		.. 'name = CASE WHEN excluded.source = %s OR ip_names.source != %s THEN excluded.name ELSE ip_names.name END, '
+		.. 'source = CASE WHEN excluded.source = %s OR ip_names.source != %s THEN excluded.source ELSE ip_names.source END, '
+		.. 'updated_at = excluded.updated_at;',
+		q(ip), q(name), q(source), q(updated_at),
+		q('dns'), q('dns'), q('dns'), q('dns'))
 end
 
 function M.insert_sample(device, target, ts, up, down)

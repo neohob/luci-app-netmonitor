@@ -75,12 +75,17 @@ return view.extend({
 			(n.kind && n.kind.indexOf('other') === 0 ? ' other' : '');
 		var label = n.label;
 		var sub = '';
+		var tags = [];
 		if (n.kind === 'other_devices' || n.kind === 'other_targets')
 			sub = _('%d 个').format(n.members);
 		else if (n.kind === 'device')
 			sub = n.ip || n.mac || '';
 		else if (n.kind === 'target' && n.unresolved)
 			sub = _('未解析');
+		else if (n.kind === 'target' && n.source === 'sni')
+			tags.push(E('span', { 'class': 'nm-tag nm-tag-sni', 'title': _('来自 TLS ClientHello SNI') }, 'SNI'));
+		else if (n.kind === 'target' && n.source === 'http_host')
+			tags.push(E('span', { 'class': 'nm-tag nm-tag-sni', 'title': _('来自 HTTP Host') }, 'Host'));
 
 		var ports = [];
 		var offs = topo.slotOffsets(slotCount, SLOT_SPACING);
@@ -97,13 +102,16 @@ return view.extend({
 			attrs.click = function() { location.href = deviceUrl(n.mac); };
 			attrs.title = _('查看设备明细');
 		}
+		var bytesTxt = (n.bytes_up != null || n.bytes_down != null)
+			? topo.formatUpDown(n.bytes_up, n.bytes_down)
+			: topo.formatBytes(n.bytes_total);
 		return E('div', attrs, [
 			E('div', { 'class': 'nm-node-label' }, [
 				E('span', { 'class': 'nm-live-dot ' + (n.live ? 'nm-pulse' : 'nm-idle') }),
 				E('span', { 'class': 'nm-label-text' }, label)
-			]),
+			].concat(tags)),
 			E('div', { 'class': 'nm-node-sub' }, sub),
-			E('div', { 'class': 'nm-node-bytes' }, topo.formatBytes(n.bytes_total))
+			E('div', { 'class': 'nm-node-bytes' }, bytesTxt)
 		].concat(ports));
 	},
 
@@ -159,7 +167,10 @@ return view.extend({
 				dot.classList.toggle('nm-idle', !n.live);
 			}
 			setText(el.querySelector('.nm-label-text'), n.label);
-			setText(el.querySelector('.nm-node-bytes'), topo.formatBytes(n.bytes_total));
+			setText(el.querySelector('.nm-node-bytes'),
+				(n.bytes_up != null || n.bytes_down != null)
+					? topo.formatUpDown(n.bytes_up, n.bytes_down)
+					: topo.formatBytes(n.bytes_total));
 			if (n.kind === 'other_devices' || n.kind === 'other_targets')
 				setText(el.querySelector('.nm-node-sub'), _('%d 个').format(n.members));
 		});
@@ -237,7 +248,7 @@ return view.extend({
 			if (path.style.animationDuration !== dur)
 				path.style.animationDuration = dur;
 			var titleEl = path.querySelector('title');
-			if (titleEl) titleEl.textContent = topo.formatBytes(e.bytes_total);
+			if (titleEl) titleEl.textContent = topo.formatEdgeTip(e);
 		});
 	},
 
@@ -253,10 +264,11 @@ return view.extend({
 				E('span', { 'class': 'nm-cell-name' }, dev.label)
 			]),
 			E('div', { 'class': 'nm-cell-ip' }, dev.ip || dev.mac),
-			E('div', { 'class': 'nm-cell-bytes' }, topo.formatBytes(dev.bytes_total)),
+			E('div', { 'class': 'nm-cell-bytes' }, topo.formatUpDown(dev.bytes_up, dev.bytes_down)),
+			E('div', { 'class': 'nm-cell-total' }, topo.formatBytes(dev.bytes_total)),
 			E('div', { 'class': 'nm-cell-sub' }, dev.live
 				? '↑' + topo.formatRate(dev.rate_up) + ' ↓' + topo.formatRate(dev.rate_down)
-				: '↑' + topo.formatBytes(dev.bytes_up) + ' ↓' + topo.formatBytes(dev.bytes_down)),
+				: ''),
 			E('div', { 'class': 'nm-cell-top' }, dev.top_target || '')
 		]);
 	},
@@ -277,10 +289,11 @@ return view.extend({
 			}
 			setText(el.querySelector('.nm-cell-name'), dev.label);
 			setText(el.querySelector('.nm-cell-ip'), dev.ip || dev.mac);
-			setText(el.querySelector('.nm-cell-bytes'), topo.formatBytes(dev.bytes_total));
+			setText(el.querySelector('.nm-cell-bytes'), topo.formatUpDown(dev.bytes_up, dev.bytes_down));
+			setText(el.querySelector('.nm-cell-total'), topo.formatBytes(dev.bytes_total));
 			setText(el.querySelector('.nm-cell-sub'), dev.live
 				? '↑' + topo.formatRate(dev.rate_up) + ' ↓' + topo.formatRate(dev.rate_down)
-				: '↑' + topo.formatBytes(dev.bytes_up) + ' ↓' + topo.formatBytes(dev.bytes_down));
+				: '');
 			setText(el.querySelector('.nm-cell-top'), dev.top_target || '');
 		});
 		return true;

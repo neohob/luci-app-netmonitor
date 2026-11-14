@@ -32,7 +32,8 @@ return view.extend({
 			interval: parseInt(this.inInterval.value, 10),
 			idle_gap: parseInt(this.inIdle.value, 10),
 			retention_value: parseInt(this.inRetention.value, 10),
-			retention_unit: this.inUnit.value
+			retention_unit: this.inUnit.value,
+			sni_enable: this.inSni && this.inSni.checked ? 1 : 0
 		};
 	},
 
@@ -101,7 +102,7 @@ return view.extend({
 			}
 			/* Wizard forces enable; otherwise keep current enabled (F8). */
 			var enable = self.wizard ? 1 : (self.cfg.enabled == null ? 1 : self.cfg.enabled);
-			return nm.callSetConfig(v.db_path, v.interval, v.idle_gap, v.retention_value, v.retention_unit, enable, confirm ? true : null)
+			return nm.callSetConfig(v.db_path, v.interval, v.idle_gap, v.retention_value, v.retention_unit, enable, v.sni_enable, confirm ? true : null)
 				.then(function(res) {
 					if (res && res.need_confirm) {
 						ui.showModal(_('缩短保留期限'), [
@@ -176,7 +177,7 @@ return view.extend({
 			E('div', { 'class': 'nm-banners' }, wizard ? [
 				nm.banner('info', _('第 1 步：选择一个可写的数据存储目录（推荐 U 盘或硬盘），检查空间后保存即开始采集。未完成前不会采集任何数据。'))
 			] : nm.statusBanners(st)),
-			nm.banner('warn', _('域名识别只依赖路由器 DNS：请让设备使用路由器作为 DNS 服务器，并关闭浏览器/系统中的「安全 DNS」(DoH/DoT)。否则只能显示 IP，并标注「未解析」。')),
+			nm.banner('info', _('域名优先来自路由器 DNS；对仍「未解析」的目标，可探测 TLS SNI / HTTP Host（需 tcpdump）。请尽量让设备使用路由器 DNS，并关闭 DoH/DoT。QUIC 与已卸载连接可能仍看不到名字。')),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, _('数据存储')),
 				this.field(_('存储目录'), E('div', {}, [
@@ -193,6 +194,25 @@ return view.extend({
 				this.estBox,
 				this.field(_('采样间隔（秒）'), this.inInterval, _('默认 5 秒。间隔越短，开始时间/时长越准确。')),
 				this.field(_('会话空闲间隔（秒）'), this.inIdle, _('同一设备与目标超过该时间无流量，即视为新会话。默认 60 秒。'))
+			]),
+			E('div', { 'class': 'cbi-section' }, [
+				E('h3', {}, _('目标名字探测')),
+				(function() {
+					self.inSni = E('input', { 'type': 'checkbox' });
+					self.inSni.checked = cfg.sni_enable == null ? true : Number(cfg.sni_enable) !== 0;
+					var mode = (st.sni && st.sni.mode) || '';
+					var tip = _('对 DNS 未能解析的远程 IP，短时抓取新建 TCP 443/80 握手中的 SNI 或 Host。');
+					if (st.sni) {
+						tip += ' ' + _('当前：') + (st.sni.available
+							? _('tcpdump 可用') + (st.sni.enabled ? _('，已启用') : _('，已关闭'))
+							: _('未检测到 tcpdump（仅 DNS）'));
+						if (st.sni.ok != null)
+							tip += ' · ' + _('累计命中 %d / 失败 %d').format(st.sni.ok || 0, st.sni.fail || 0);
+					}
+					return self.field(_('探测未解析目标的 TLS/HTTP 名字'), E('label', {}, [
+						self.inSni, ' ', _('启用（仅未解析 IP）')
+					]), tip);
+				})()
 			]),
 			controls
 		]);

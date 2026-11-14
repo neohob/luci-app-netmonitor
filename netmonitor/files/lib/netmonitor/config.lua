@@ -16,16 +16,18 @@ M.DEFAULTS = {
 	dns_log = '/tmp/netmonitor-dnsmasq.log',
 	manage_dnsmasq = 1,
 	enable_acct = 1,
+	sni_enable = 1,
 }
 
 local NUMERIC = {
 	enabled = true, interval = true, idle_gap = true, retention_value = true,
 	reserve_min_mb = true, reserve_pct = true, manage_dnsmasq = true, enable_acct = true,
+	sni_enable = true,
 }
 
 -- Settable from the UI; everything else is UCI-only.
 M.SETTABLE = { db_path = true, interval = true, idle_gap = true,
-	retention_value = true, retention_unit = true, enabled = true }
+	retention_value = true, retention_unit = true, enabled = true, sni_enable = true }
 
 local function shell_quote(s)
 	return "'" .. tostring(s):gsub("'", "'\\''") .. "'"

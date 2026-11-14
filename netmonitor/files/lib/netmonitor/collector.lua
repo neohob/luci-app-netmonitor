@@ -3,6 +3,7 @@
 local conntrack = require 'netmonitor.conntrack'
 local neigh = require 'netmonitor.neigh'
 local dns = require 'netmonitor.dns'
+local sni = require 'netmonitor.sni'
 local session = require 'netmonitor.session'
 local live = require 'netmonitor.live'
 local disk = require 'netmonitor.disk'
@@ -95,7 +96,9 @@ function M.new(cfg, opts)
 		sess = session.new(),
 		live = live.new(),
 		dns = dns.new(),
+		sni = sni.new(),
 		last_retention = 0,
+		sni_status = nil,
 	}
 	return ctx
 end
@@ -106,6 +109,13 @@ function M.init_db(ctx)
 	local rows = db.query(ctx.db_file,
 		'SELECT device, target, started_at, last_seen_at, bytes_up, bytes_down FROM sessions WHERE closed = 0;')
 	session.restore(ctx.sess, rows)
+	local names = db.query(ctx.db_file, 'SELECT ip, name, source, updated_at FROM ip_names;') or {}
+	dns.load_persisted(ctx.dns, names, os.time())
+	for _, r in ipairs(names) do
+		if r.source == 'sni' or r.source == 'http_host' then
+			sni.remember(ctx.sni, r.ip, r.name, r.source, tonumber(r.updated_at) or os.time())
+		end
+	end
 	return true
 end
 
@@ -119,19 +129,23 @@ local function default_conntrack() return conntrack.read() end
 local function default_neigh(ctx) return neigh.snapshot(ctx.cfg.lan_ifaces) end
 local function default_dns(ctx) return dns.read_log(ctx.dns, ctx.cfg.dns_log) end
 
-function M.build_sql(ts, devices, targets, pairs_list, changed)
+function M.build_sql(ts, devices, targets, pairs_list, changed, ip_name_rows)
 	local out = { 'BEGIN;' }
 	for mac, d in pairs(devices) do
 		out[#out + 1] = sql.upsert_device(mac, d.ip, d.hostname, ts, ts)
 	end
 	for key, t in pairs(targets) do
-		out[#out + 1] = sql.upsert_target(key, t.kind, t.display, t.ip, t.unresolved)
+		local ra = (tonumber(t.unresolved) == 0) and ts or nil
+		out[#out + 1] = sql.upsert_target(key, t.kind, t.display, t.ip, t.unresolved, t.source, ra)
 	end
 	for _, p in ipairs(pairs_list) do
 		out[#out + 1] = sql.insert_sample(p.device, p.target, ts, p.up, p.down)
 	end
 	for _, s in ipairs(changed) do
 		out[#out + 1] = sql.upsert_session(s)
+	end
+	for _, n in ipairs(ip_name_rows or {}) do
+		out[#out + 1] = sql.upsert_ip_name(n.ip, n.name, n.source, n.ts or ts)
 	end
 	out[#out + 1] = 'COMMIT;'
 	return table.concat(out, '\n')
@@ -177,10 +191,23 @@ function M.poll(ctx, now)
 	end
 
 	local agg, order, devices, targets = {}, {}, {}, {}
+	local unresolved_ips, unresolved_seen = {}, {}
+	local ip_name_rows = {}
 	for _, d in ipairs(deltas) do
 		local mac, dev_ip, remote, dir = M.classify(d.entry, snap)
 		if mac then
-			local t = dns.target_for(ctx.dns, dev_ip, remote, now)
+			local sni_hit = sni.lookup(ctx.sni, remote, now)
+			local t = dns.target_for(ctx.dns, dev_ip, remote, now, sni_hit)
+			if tonumber(t.unresolved) == 1 and not unresolved_seen[remote] then
+				unresolved_seen[remote] = true
+				unresolved_ips[#unresolved_ips + 1] = remote
+			end
+			-- Queue DNS/SNI names for persistence
+			if t.source == 'dns' and t.ip and t.display then
+				ip_name_rows[#ip_name_rows + 1] = { ip = t.ip, name = t.display, source = 'dns', ts = now }
+			elseif (t.source == 'sni' or t.source == 'http_host') and t.ip and t.display then
+				ip_name_rows[#ip_name_rows + 1] = { ip = t.ip, name = t.display, source = t.source, ts = now }
+			end
 			local up = (dir == 'orig') and d.d_orig or d.d_reply
 			local down = (dir == 'orig') and d.d_reply or d.d_orig
 			local k = mac .. '\t' .. t.key
@@ -195,6 +222,18 @@ function M.poll(ctx, now)
 			local lease = snap.leases and snap.leases[mac]
 			devices[mac] = { ip = dev_ip, hostname = lease and lease.hostname }
 			targets[t.key] = t
+		end
+	end
+
+	-- SNI/Host probe for unresolved remotes (best-effort; may block briefly).
+	local probe = sni.probe_unresolved(ctx.sni, unresolved_ips, cfg, now)
+	res.sni = probe
+	ctx.sni_status = sni.status(ctx.sni, cfg)
+	if probe and not probe.skipped and probe.found and probe.found > 0 then
+		for ip, hit in pairs(ctx.sni.by_ip) do
+			if hit.ts == now then
+				ip_name_rows[#ip_name_rows + 1] = { ip = ip, name = hit.name, source = hit.source, ts = now }
+			end
 		end
 	end
 
@@ -215,8 +254,8 @@ function M.poll(ctx, now)
 		live.record(ctx.live, now, order, math.max(3 * cfg.interval, 10))
 		res.pairs = order
 		res.changed = changed
-		if #order > 0 or #changed > 0 then
-			local ok, err = db.exec(ctx.db_file, M.build_sql(now, devices, targets, order, changed))
+		if #order > 0 or #changed > 0 or #ip_name_rows > 0 then
+			local ok, err = db.exec(ctx.db_file, M.build_sql(now, devices, targets, order, changed, ip_name_rows))
 			if not ok then
 				res.error = err
 				res.db_error = true
@@ -259,6 +298,10 @@ function M.status_payload(ctx, res, now)
 	if res.retention_error then warnings[#warnings + 1] = 'retention_failed' end
 	local dh = dns.health(ctx.cfg.dns_log)
 	if not dh.ok and dh.warning then warnings[#warnings + 1] = dh.warning end
+	local ss = ctx.sni_status or sni.status(ctx.sni, ctx.cfg)
+	if (tonumber(ctx.cfg.sni_enable) or 1) ~= 0 and not ss.available then
+		warnings[#warnings + 1] = 'sni_unavailable'
+	end
 	return {
 		state = state,
 		updated = now,
@@ -270,6 +313,7 @@ function M.status_payload(ctx, res, now)
 		retention_detail = res.retention_error and res.error or nil,
 		disk = res.disk,
 		warnings = warnings,
+		sni = ss,
 		live = json.object(snap.devices),
 		live_pairs = pairs_live,
 	}

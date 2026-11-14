@@ -96,7 +96,8 @@ function M.build(rows, info, live)
 		local id = tgt_node[t.key]
 		local ti = info.targets[t.key] or {}
 		local base = (i <= top)
-			and { kind = 'target', key = t.key, label = ti.display or t.key, unresolved = ti.unresolved == 1 }
+			and { kind = 'target', key = t.key, label = ti.display or t.key,
+				unresolved = ti.unresolved == 1, source = ti.source or (ti.unresolved == 1 and 'ip' or 'dns') }
 			or { kind = 'other_targets', label = '其他去向' }
 		local n = node(nodes.targets, id, base)
 		n.members = n.members + 1
@@ -144,9 +145,11 @@ function M.build(rows, info, live)
 		p.weight = max_b > 0 and p.bytes_total / max_b or 0
 		out_paths[#out_paths + 1] = p
 		edges[#edges + 1] = { id = pid .. '#in', path = pid, from = p.from, to = M.GATEWAY,
-			color = p.color, weight = p.weight, live = p.live, bytes_total = p.bytes_total }
+			color = p.color, weight = p.weight, live = p.live,
+			bytes_up = p.bytes_up, bytes_down = p.bytes_down, bytes_total = p.bytes_total, leg = 'up' }
 		edges[#edges + 1] = { id = pid .. '#out', path = pid, from = M.GATEWAY, to = p.to,
-			color = p.color, weight = p.weight, live = p.live, bytes_total = p.bytes_total }
+			color = p.color, weight = p.weight, live = p.live,
+			bytes_up = p.bytes_up, bytes_down = p.bytes_down, bytes_total = p.bytes_total, leg = 'down' }
 	end
 
 	return {

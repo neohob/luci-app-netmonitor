@@ -100,12 +100,30 @@ function M.health(path)
 end
 
 -- Destination identity for a remote IP (domain preferred, else IP).
-function M.target_for(state, client_ip, ip, now)
+-- Optional sni_hit: { name=, source='sni'|'http_host' } from the SNI probe cache.
+function M.target_for(state, client_ip, ip, now, sni_hit)
 	local name = M.lookup(state, client_ip, ip, now)
 	if name then
-		return { key = name, kind = 'domain', display = name, ip = ip, unresolved = 0 }
+		return { key = name, kind = 'domain', display = name, ip = ip,
+			unresolved = 0, source = 'dns' }
 	end
-	return { key = ip, kind = 'ip', display = ip, ip = ip, unresolved = 1 }
+	if sni_hit and sni_hit.name then
+		local src = sni_hit.source or 'sni'
+		return { key = sni_hit.name, kind = 'domain', display = sni_hit.name, ip = ip,
+			unresolved = 0, source = src }
+	end
+	return { key = ip, kind = 'ip', display = ip, ip = ip, unresolved = 1, source = 'ip' }
+end
+
+function M.load_persisted(state, rows, now)
+	for _, r in ipairs(rows or {}) do
+		if r.ip and r.name and (r.source == 'dns' or not r.source) then
+			local ts = tonumber(r.updated_at) or now or 0
+			if not state.by_ip[r.ip] or (state.by_ip[r.ip].ts or 0) < ts then
+				state.by_ip[r.ip] = { name = r.name, ts = ts, persisted = ts }
+			end
+		end
+	end
 end
 
 return M

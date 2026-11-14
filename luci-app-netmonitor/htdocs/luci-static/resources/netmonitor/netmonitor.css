@@ -58,8 +58,9 @@
 .nm-cell.live { border-color: var(--nm-live); }
 .nm-cell-head { display: flex; align-items: center; min-width: 0; }
 .nm-cell-name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nm-cell-ip, .nm-cell-sub, .nm-cell-top { color: var(--nm-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nm-cell-ip, .nm-cell-sub, .nm-cell-top, .nm-cell-total { color: var(--nm-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nm-cell-bytes { font-size: 14px; font-weight: 600; }
+.nm-tag-sni { background: rgba(59,130,246,.18); color: inherit; font-size: 10px; vertical-align: middle; }
 .nm-showall { margin-top: 8px; }
 
 @media (max-width: 600px) {

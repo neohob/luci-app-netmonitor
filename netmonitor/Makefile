@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=netmonitor
-PKG_VERSION:=0.1.0
+PKG_VERSION:=0.2.0
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 
@@ -12,13 +12,14 @@ define Package/netmonitor
   CATEGORY:=Network
   TITLE:=Per-device traffic collector (conntrack + DNS + SQLite)
   DEPENDS:=+lua +sqlite3-cli +ip-tiny
+  # Soft: tcpdump enables SNI/Host probing for unresolved IPs (optional).
   PKGARCH:=all
 endef
 
 define Package/netmonitor/description
   Samples nf_conntrack byte counters, correlates destinations with dnsmasq
-  DNS answers and DHCP leases, and stores device -> destination traffic
-  and sessions in SQLite. Exposes the netmonitor ubus object via rpcd.
+  DNS answers (and optional TLS SNI / HTTP Host for unresolved IPs), and
+  stores device -> destination upload/download traffic in SQLite.
 endef
 
 define Package/netmonitor/conffiles

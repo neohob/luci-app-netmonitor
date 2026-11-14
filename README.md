@@ -2,12 +2,13 @@
 
 OpenWrt / ImmortalWrt / iStoreOS LuCI 插件：按局域网设备统计「谁访问了哪里、用了多少流量」。
 
-- **左→中→右流量拓扑**：设备 → 网关 → 目标（Top4 +「其他」），同色路径、流动动画
-- **设备网格**：全量设备卡片，实时上下行速率
+- **左→中→右流量拓扑**：设备 → 网关 → 目标（Top4 +「其他」），同色路径、流动动画；边上可看 ↑上传 / ↓下载
+- **设备网格**：全量设备卡片，时段 ↑↓ 与实时速率
 - **按天会话明细**：目标 / 上传下载 / 约略开始时间与时长
+- **目标命名**：DNS 优先；对仍「未解析」的 IP，可选探测 TLS SNI / HTTP Host（需 `tcpdump`）
 - **可配置保留**：按自然时间清理；存储目录可指向 U 盘 / 硬盘，闪存写入有容量预警
 
-> 域名识别依赖路由器 DNS（dnsmasq 应答）。请让设备使用路由器 DNS，并关闭浏览器/系统 DoH/DoT，否则目标可能只显示 IP（标注「未解析」）。
+> 请尽量让设备使用路由器 DNS，并关闭 DoH/DoT。SNI 探测覆盖部分硬编码 IP 的智能硬件；QUIC / 已 offload 连接仍可能看不到名字。设备内进程级归因尚未支持。
 
 菜单路径：**管控 → 流量监控**
 
@@ -42,8 +43,10 @@ Release 提供 **architecture = all** 的通用包，不区分芯片（x86_64 / 
 
 ```sh
 opkg update
-opkg install ./netmonitor_0.1.0-1_all.ipk
-opkg install ./luci-app-netmonitor_0.1.0-1_all.ipk
+opkg install ./netmonitor_0.2.0-1_all.ipk
+opkg install ./luci-app-netmonitor_0.2.0-1_all.ipk
+# 可选（SNI/Host 探测）：
+opkg install tcpdump
 ```
 
 ### 方式 B：iStore / 自解压 `.run`
@@ -51,9 +54,9 @@ opkg install ./luci-app-netmonitor_0.1.0-1_all.ipk
 适合 iStoreOS 或习惯一键脚本的场景（内含采集器 + LuCI，与 CPU 架构无关）：
 
 ```sh
-chmod +x luci-app-netmonitor_0.1.0-1_all.run
-sh luci-app-netmonitor_0.1.0-1_all.run          # 安装 / 升级
-# sh luci-app-netmonitor_0.1.0-1_all.run uninstall  # 卸载（保留配置与数据库）
+chmod +x luci-app-netmonitor_0.2.0-1_all.run
+sh luci-app-netmonitor_0.2.0-1_all.run          # 安装 / 升级
+# sh luci-app-netmonitor_0.2.0-1_all.run uninstall  # 卸载（保留配置与数据库）
 ```
 
 装完刷新 LuCI，进入 **管控 → 流量监控**。建议在设置里把存储目录改到外置磁盘，避免长期写闪存。

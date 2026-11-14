@@ -9,7 +9,7 @@ var callDevices = rpc.declare({ object: 'netmonitor', method: 'devices', params:
 var callDetail = rpc.declare({ object: 'netmonitor', method: 'device_detail', params: [ 'mac', 'day', 'sort' ] });
 var callGetConfig = rpc.declare({ object: 'netmonitor', method: 'get_config' });
 var callSetConfig = rpc.declare({ object: 'netmonitor', method: 'set_config',
-	params: [ 'db_path', 'interval', 'idle_gap', 'retention_value', 'retention_unit', 'enabled', 'confirm' ] });
+	params: [ 'db_path', 'interval', 'idle_gap', 'retention_value', 'retention_unit', 'enabled', 'sni_enable', 'confirm' ] });
 var callEstimate = rpc.declare({ object: 'netmonitor', method: 'estimate',
 	params: [ 'retention_value', 'retention_unit', 'db_path' ] });
 var callCheckPath = rpc.declare({ object: 'netmonitor', method: 'check_path', params: [ 'path' ] });
@@ -120,6 +120,8 @@ function statusBanners(st) {
 			out.push(banner('warn', _('已启用防火墙流量卸载 (flow offloading)，被卸载的连接可能统计不全。')));
 		else if (w === 'dns_log_missing')
 			out.push(banner('warn', _('未找到 dnsmasq 查询日志，域名归因将大量显示为 IP「未解析」。请确认设备使用路由器 DNS，并检查设置中的 DNS 日志路径。')));
+		else if (w === 'sni_unavailable')
+			out.push(banner('warn', _('未安装 tcpdump：无法对「未解析」目标做 TLS/HTTP 名字探测，仅使用 DNS。可选安装 tcpdump 后重启采集。')));
 		else if (w === 'retention_failed')
 			out.push(banner('warn', _('历史清理（保留期限）失败，采集写入仍在继续。详情：') + errorText(st.retention_detail || st.error || 'db_error')));
 	});
