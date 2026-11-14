@@ -1,0 +1,17 @@
+{
+	"luci-app-netmonitor": {
+		"description": "Grant access to netmonitor traffic statistics and settings",
+		"read": {
+			"ubus": {
+				"netmonitor": [ "status", "topology", "devices", "device_detail", "get_config", "estimate", "check_path" ]
+			},
+			"uci": [ "netmonitor" ]
+		},
+		"write": {
+			"ubus": {
+				"netmonitor": [ "set_config", "collector", "prepare_path" ]
+			},
+			"uci": [ "netmonitor" ]
+		}
+	}
+}

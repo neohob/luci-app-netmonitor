@@ -1,0 +1,6 @@
+192.168.1.10 dev br-lan lladdr AA:BB:CC:00:00:01 REACHABLE
+192.168.1.11 dev br-lan lladdr aa:bb:cc:00:00:02 STALE
+192.168.1.12 dev br-lan lladdr aa:bb:cc:00:00:03 DELAY
+192.168.1.99 dev br-lan  FAILED
+203.0.113.1 dev eth1 lladdr 00:11:22:33:44:55 REACHABLE
+fe80::1 dev br-lan lladdr aa:bb:cc:00:00:01 router STALE

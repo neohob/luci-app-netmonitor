@@ -1,0 +1,16 @@
+#!/bin/sh
+
+# Destination names come only from dnsmasq answers (DNS-only attribution),
+# so route its query log to a tmpfs file the collector tails and truncates.
+# The file must live directly in /tmp: dnsmasq starts before any mkdir here.
+[ "$(uci -q get netmonitor.main.manage_dnsmasq)" = "1" ] || exit 0
+
+log="$(uci -q get netmonitor.main.dns_log)"
+[ -n "$log" ] || log=/tmp/netmonitor-dnsmasq.log
+
+uci -q set dhcp.@dnsmasq[0].logqueries='1'
+uci -q set dhcp.@dnsmasq[0].logfacility="$log"
+uci -q commit dhcp
+/etc/init.d/dnsmasq restart >/dev/null 2>&1
+
+exit 0

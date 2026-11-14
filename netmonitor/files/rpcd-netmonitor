@@ -1,0 +1,16 @@
+#!/usr/bin/lua
+-- rpcd exec plugin exposing the `netmonitor` ubus object.
+local json = require 'netmonitor.json'
+local config = require 'netmonitor.config'
+local api = require 'netmonitor.api'
+
+if arg[1] == 'list' then
+	io.write(json.encode(api.METHODS))
+elseif arg[1] == 'call' then
+	local input = io.read('*a') or ''
+	local args = {}
+	if input:match('%S') then args = json.decode(input) or {} end
+	local env = { cfg = config.load(), now = os.time() }
+	local res = api.call(arg[2], args, env)
+	io.write(json.encode(json.object(res)))
+end

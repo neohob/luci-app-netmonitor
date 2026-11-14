@@ -1,0 +1,43 @@
+{
+	"admin/control": {
+		"title": "管控",
+		"order": 44,
+		"action": {
+			"type": "firstchild",
+			"recurse": true
+		}
+	},
+	"admin/control/netmonitor": {
+		"title": "流量监控",
+		"order": 60,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-netmonitor" ]
+		}
+	},
+	"admin/control/netmonitor/overview": {
+		"title": "总览",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "netmonitor/overview"
+		}
+	},
+	"admin/control/netmonitor/settings": {
+		"title": "设置",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "netmonitor/settings"
+		}
+	},
+	"admin/control/netmonitor/device": {
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "netmonitor/device"
+		}
+	}
+}

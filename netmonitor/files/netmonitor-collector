@@ -1,0 +1,48 @@
+#!/usr/bin/lua
+-- netmonitor collector daemon (run by procd via /etc/init.d/netmonitor).
+local config = require 'netmonitor.config'
+local collector = require 'netmonitor.collector'
+
+local cfg = config.load()
+local rundir = collector.RUNDIR
+os.execute('mkdir -p ' .. config.shell_quote(rundir))
+
+local function base_state(state, extra)
+	local st = { state = state, updated = os.time(), interval = cfg.interval }
+	for k, v in pairs(extra or {}) do st[k] = v end
+	return st
+end
+
+if arg[1] == '--mark-stopped' then
+	collector.write_state(rundir, base_state('stopped'))
+	os.exit(0)
+end
+
+local pre = collector.preflight(cfg)
+if not pre.ok then
+	collector.write_state(rundir, base_state(pre.state, { error = pre.error }))
+	io.stderr:write('netmonitor: not starting: ' .. tostring(pre.error) .. '\n')
+	os.exit(2)
+end
+if arg[1] == '--check' then os.exit(0) end
+
+local ctx = collector.new(cfg)
+ctx.warnings = pre.check.warnings
+local ok, err = collector.init_db(ctx)
+if not ok then
+	collector.write_state(rundir, base_state('path_error', { error = 'db_init_failed', detail = err }))
+	io.stderr:write('netmonitor: db init failed: ' .. tostring(err) .. '\n')
+	os.exit(3)
+end
+
+while true do
+	local started = os.time()
+	local okp, res = pcall(collector.poll, ctx, started)
+	if okp then
+		collector.write_state(rundir, collector.status_payload(ctx, res, started))
+	else
+		io.stderr:write('netmonitor: poll failed: ' .. tostring(res) .. '\n')
+	end
+	local wait = cfg.interval - (os.time() - started)
+	if wait > 0 then os.execute('sleep ' .. wait) end
+end
