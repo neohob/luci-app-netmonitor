@@ -106,15 +106,93 @@ function M.parse_http_host(payload)
 	local head = payload:sub(1, math.min(2048, #payload))
 	if not head:match('^%u+%s+%S+%s+HTTP/') then return nil end
 	local host = head:match('\r?\n[Hh][Oo][Ss][Tt]:%s*([%w%._%-]+)')
-	if host and #host <= 253 then return host:lower() end
-	return nil
+	if not host or #host > 253 then return nil end
+	host = host:lower()
+	-- Ignore Host: that is already an IP (useless for naming).
+	if host:match('^%d+%.%d+%.%d+%.%d+$') then return nil end
+	return host
 end
 
-local function extract_from_frame(data, network)
+-- Parse DNS name at offset; returns name, next_offset (handles compression).
+local function dns_name(payload, off, depth)
+	depth = depth or 0
+	if depth > 8 or off > #payload then return nil, off end
+	local labels, jumped = {}, false
+	local next_off = off
+	while off <= #payload do
+		local len = payload:byte(off)
+		if not len then return nil, next_off end
+		if len == 0 then
+			if not jumped then next_off = off + 1 end
+			break
+		end
+		if len >= 0xc0 then
+			local b2 = payload:byte(off + 1)
+			if not b2 then return nil, next_off end
+			local ptr = (len - 0xc0) * 256 + b2
+			if not jumped then next_off = off + 2; jumped = true end
+			off = ptr + 1
+		else
+			local lab = payload:sub(off + 1, off + len)
+			if #lab < len then return nil, next_off end
+			labels[#labels + 1] = lab:lower()
+			off = off + 1 + len
+			if not jumped then next_off = off end
+		end
+	end
+	if #labels == 0 then return nil, next_off end
+	return table.concat(labels, '.'), next_off
+end
+
+-- Extract A-record IP→name pairs from a DNS message (response preferred).
+function M.parse_dns_message(payload)
+	if type(payload) ~= 'string' or #payload < 12 then return {} end
+	local flags = u16be(payload, 3)
+	if not flags or math.floor(flags / 0x8000) ~= 1 then return {} end -- response only
+	local qd = u16be(payload, 5) or 0
+	local an = u16be(payload, 7) or 0
+	if an < 1 then return {} end
+	local off = 13
+	local qname
+	for _ = 1, qd do
+		local n
+		n, off = dns_name(payload, off)
+		if not n then return {} end
+		if not qname then qname = n end
+		off = off + 4 -- qtype+qclass
+	end
+	local out = {}
+	for _ = 1, an do
+		local n
+		n, off = dns_name(payload, off)
+		if not n or off + 9 > #payload then break end
+		local rtype = u16be(payload, off)
+		local rdlen = u16be(payload, off + 8)
+		off = off + 10
+		if not rtype or not rdlen or off + rdlen - 1 > #payload then break end
+		local name = n or qname
+		if rtype == 1 and rdlen == 4 and name then -- A
+			local a, b, c, d = payload:byte(off, off + 3)
+			local ip = string.format('%d.%d.%d.%d', a, b, c, d)
+			if not ip:match('^0%.') and not ip:match('^127%.') then
+				out[ip] = { name = name, source = 'dns' }
+			end
+		end
+		off = off + rdlen
+	end
+	return out
+end
+
+local function ipv4_at(data, off)
+	return string.format('%d.%d.%d.%d',
+		data:byte(off), data:byte(off + 1), data:byte(off + 2), data:byte(off + 3))
+end
+
+local function extract_from_frame(data, network, hits)
 	local ip_off
 	if network == 1 then
-		if #data < 14 then return nil end
-		if data:byte(13) * 256 + data:byte(14) ~= 0x0800 then return nil end
+		if #data < 14 then return end
+		if data:byte(13) * 256 + data:byte(14) ~= 0x0800 then return end
 		ip_off = 15
 	elseif network == 113 then
 		ip_off = 17
@@ -124,21 +202,33 @@ local function extract_from_frame(data, network)
 		if #data >= 14 and data:byte(13) * 256 + data:byte(14) == 0x0800 then
 			ip_off = 15
 		else
-			return nil
+			return
 		end
 	end
-	if #data < ip_off + 20 then return nil end
+	if #data < ip_off + 20 then return end
 	local ihl = (data:byte(ip_off) % 16) * 4
-	if ihl < 20 then return nil end
-	if data:byte(ip_off + 9) ~= 6 then return nil end
-	local dst = string.format('%d.%d.%d.%d',
-		data:byte(ip_off + 16), data:byte(ip_off + 17),
-		data:byte(ip_off + 18), data:byte(ip_off + 19))
-	local tcp_off = ip_off + ihl
-	if #data < tcp_off + 13 then return nil end
-	local doff = math.floor(data:byte(tcp_off + 12) / 16) * 4
-	local payload = data:sub(tcp_off + doff)
-	local dport = data:byte(tcp_off + 2) * 256 + data:byte(tcp_off + 3)
+	if ihl < 20 then return end
+	local proto = data:byte(ip_off + 9)
+	local l4 = ip_off + ihl
+
+	if proto == 17 then -- UDP DNS
+		if #data < l4 + 8 then return end
+		local sport = data:byte(l4) * 256 + data:byte(l4 + 1)
+		local dport = data:byte(l4 + 2) * 256 + data:byte(l4 + 3)
+		if sport ~= 53 and dport ~= 53 then return end
+		local dns_payload = data:sub(l4 + 8)
+		for ip, h in pairs(M.parse_dns_message(dns_payload)) do
+			hits[ip] = h
+		end
+		return
+	end
+
+	if proto ~= 6 then return end -- TCP
+	if #data < l4 + 13 then return end
+	local doff = math.floor(data:byte(l4 + 12) / 16) * 4
+	local payload = data:sub(l4 + doff)
+	local dport = data:byte(l4 + 2) * 256 + data:byte(l4 + 3)
+	local dst = ipv4_at(data, ip_off + 16)
 	local name, source
 	if dport == 443 then
 		name = M.parse_tls_sni(payload)
@@ -154,8 +244,7 @@ local function extract_from_frame(data, network)
 			source = name and 'http_host' or nil
 		end
 	end
-	if name and source then return dst, name, source end
-	return nil
+	if name and source then hits[dst] = { name = name, source = source } end
 end
 
 function M.parse_pcap(path)
@@ -177,8 +266,7 @@ function M.parse_pcap(path)
 		if not incl or incl <= 0 or incl > 65535 then break end
 		local data = f:read(incl)
 		if not data or #data < incl then break end
-		local dst, name, source = extract_from_frame(data, network)
-		if dst then hits[dst] = { name = name, source = source } end
+		extract_from_frame(data, network, hits)
 	end
 	f:close()
 	return hits
@@ -207,13 +295,87 @@ local function in_cooldown(state, ip, now)
 	return until_t and now < until_t
 end
 
-function M.capture(iface, secs)
+M.DNS_READY = '/tmp/netmonitor-dns-ready.pcap'
+M.DNS_PID = '/var/run/netmonitor/dns-sniff.pid'
+M.DNS_SNIFF = '/usr/sbin/netmonitor-dns-sniff'
+
+local function read_pid(path)
+	local f = io.open(path, 'r')
+	if not f then return nil end
+	local n = tonumber((f:read('*l') or ''):match('%d+'))
+	f:close()
+	return n
+end
+
+local function alive(pid)
+	if not pid then return false end
+	local f = io.open('/proc/' .. tostring(pid) .. '/cmdline', 'r')
+	if not f then return false end
+	local cmd = f:read('*a') or ''
+	f:close()
+	return cmd:find('netmonitor-dns-sniff', 1, true) ~= nil
+end
+
+-- Start the package-bundled DNS sniffer as a child of the collector (not cron / not a
+-- separate init service). Soft-dep: tcpdump + netmonitor-dns-sniff.
+function M.start_dns_sniff(cfg, rundir)
+	if (tonumber(cfg and cfg.sni_enable) or 1) == 0 then return false, 'disabled' end
+	if not M.available() then return false, 'sni_unavailable' end
+	local sniff = M.DNS_SNIFF
+	local f = io.open(sniff, 'r')
+	if not f then return false, 'no_sniff_bin' end
+	f:close()
+	rundir = rundir or '/var/run/netmonitor'
+	os.execute('mkdir -p ' .. rundir)
+	local pid = read_pid(M.DNS_PID)
+	if alive(pid) then return true, 'already' end
+	if pid then os.remove(M.DNS_PID) end
+	local iface = ((cfg and cfg.lan_ifaces) or 'br-lan'):match('^[%w%._%-]+') or 'br-lan'
+	-- Background child; pid file written by the sniff script itself.
+	os.execute(string.format(
+		'%s %s >/dev/null 2>&1 &',
+		sniff, iface))
+	return true, 'started'
+end
+
+function M.stop_dns_sniff()
+	local pid = read_pid(M.DNS_PID)
+	if pid then
+		os.execute('kill ' .. tostring(pid) .. ' 2>/dev/null || true')
+		os.remove(M.DNS_PID)
+	end
+	-- Reap leftover capture tcpdump owned by our sniff slices.
+	os.execute('pkill -f "tcpdump .*-w /tmp/netmonitor-dns" 2>/dev/null || true')
+	os.remove('/tmp/netmonitor-dns-capturing.pcap')
+	-- leave ready pcap for one last ingest if any
+end
+
+-- Ingest continuous DNS sniffer output (written by netmonitor-dns-sniff child).
+function M.ingest_dns_ready(dns_state, now)
+	local path = M.DNS_READY
+	local f = io.open(path, 'rb')
+	if not f then return 0 end
+	f:close()
+	local hits = M.parse_pcap(path)
+	os.remove(path)
+	local n = 0
+	for ip, h in pairs(hits) do
+		if h.source == 'dns' and dns_state then
+			dns_state.by_ip[ip] = { name = h.name, ts = now }
+			n = n + 1
+		end
+	end
+	return n
+end
+
+function M.capture_sni(iface, secs)
 	if not M.available() then return {}, 'sni_unavailable' end
 	iface = iface and tostring(iface):match('^[%w%._%-]+$') or 'br-lan'
 	secs = tonumber(secs) or M.CAPTURE_SECS
 	local pcap = '/tmp/netmonitor-sni.' .. tostring(math.floor(os.time())) .. '.pcap'
 	local cmd = string.format(
-		'timeout %d tcpdump -i %s -c %d -nn -s 0 -w %s "tcp dst port 443 or tcp dst port 80" >/dev/null 2>&1',
+		'timeout %d tcpdump -i %s -c %d -nn -s 0 -w %s '
+		.. '"tcp dst port 443 or tcp dst port 80" >/dev/null 2>&1',
 		secs, iface, M.CAPTURE_COUNT, pcap)
 	os.execute(cmd)
 	local hits = M.parse_pcap(pcap)
@@ -221,47 +383,66 @@ function M.capture(iface, secs)
 	return hits
 end
 
-function M.probe_unresolved(state, unresolved_ips, cfg, now)
+-- Merge continuous DNS file + occasional SNI/Host probe for unresolved IPs.
+function M.probe_unresolved(state, unresolved_ips, cfg, now, dns_state)
 	if (tonumber(cfg.sni_enable) or 1) == 0 then
 		return { skipped = true, reason = 'disabled' }
 	end
+	local dns_n = M.ingest_dns_ready(dns_state, now)
+	local found, sni_n = dns_n, 0
+
 	if not M.available() then
-		return { skipped = true, reason = 'sni_unavailable' }
+		return { skipped = dns_n == 0, reason = 'sni_unavailable', found = found, dns = dns_n, sni = 0 }
 	end
+
 	local want = {}
 	for _, ip in ipairs(unresolved_ips or {}) do
-		if not in_cooldown(state, ip, now) and not state.by_ip[ip] then
+		if not in_cooldown(state, ip, now) and not state.by_ip[ip]
+			and not (dns_state and dns_state.by_ip[ip]) then
 			want[#want + 1] = ip
 			if #want >= M.MAX_PROBE_PER_POLL then break end
 		end
 	end
-	if #want == 0 then return { skipped = true, reason = 'nothing' } end
-	if state.last_probe and now - state.last_probe < math.max(cfg.interval or 5, 5) then
-		return { skipped = true, reason = 'rate' }
-	end
-	state.last_probe = now
-	state.stats.runs = (state.stats.runs or 0) + 1
-	local iface = (cfg.lan_ifaces or 'br-lan'):match('^[%w%._%-]+') or 'br-lan'
-	local hits = M.capture(iface, M.CAPTURE_SECS)
-	M.feed_hits(state, hits, now)
-	local found = 0
-	for _ in pairs(hits) do found = found + 1 end
-	for _, ip in ipairs(want) do
-		if not hits[ip] then
-			state.cooldown[ip] = now + M.COOLDOWN_FAIL
-			state.stats.fail = (state.stats.fail or 0) + 1
+
+	-- SNI probe only when there are unresolved IPs; rate-limited (DNS is continuous).
+	if #want > 0 and (not state.last_probe or now - state.last_probe >= math.max(cfg.interval or 5, 5)) then
+		state.last_probe = now
+		state.stats.runs = (state.stats.runs or 0) + 1
+		local iface = (cfg.lan_ifaces or 'br-lan'):match('^[%w%._%-]+') or 'br-lan'
+		local hits = M.capture_sni(iface, M.CAPTURE_SECS)
+		for ip, h in pairs(hits) do
+			if h.source ~= 'dns' then
+				M.remember(state, ip, h.name, h.source, now)
+				sni_n = sni_n + 1
+				found = found + 1
+			end
+		end
+		for _, ip in ipairs(want) do
+			if not hits[ip] and not (dns_state and dns_state.by_ip[ip]) then
+				state.cooldown[ip] = now + M.COOLDOWN_FAIL
+				state.stats.fail = (state.stats.fail or 0) + 1
+			end
 		end
 	end
-	return { skipped = false, found = found, wanted = #want }
+
+	if found == 0 and #want == 0 then
+		return { skipped = true, reason = 'nothing', found = 0, dns = dns_n, sni = 0 }
+	end
+	return { skipped = false, found = found, dns = dns_n, sni = sni_n, wanted = #want }
 end
 
 function M.status(state, cfg)
 	local en = (tonumber(cfg and cfg.sni_enable) or 1) ~= 0
 	local avail = M.available()
+	local sniff_on = alive(read_pid(M.DNS_PID))
 	return {
 		enabled = en,
 		available = avail,
-		mode = (not en and 'disabled') or (avail and 'sni_unresolved') or 'dns_only',
+		dns_sniff = sniff_on,
+		mode = (not en and 'disabled')
+			or (avail and sniff_on and 'dns_sniff+sni')
+			or (avail and 'sni_unresolved')
+			or 'dns_only',
 		ok = state and state.stats and state.stats.ok or 0,
 		fail = state and state.stats and state.stats.fail or 0,
 		runs = state and state.stats and state.stats.runs or 0,

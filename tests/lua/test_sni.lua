@@ -37,3 +37,20 @@ H.case('S3', 'DNS wins over SNI; SNI fills unresolved', function()
 	H.eq(t2.source, 'sni')
 	H.eq(t2.unresolved, 0)
 end)
+
+H.case('S4', 'parse_dns_message extracts A records', function()
+	-- Minimal DNS response: qname example.com A → 93.184.216.34
+	local qname = string.char(7) .. 'example' .. string.char(3) .. 'com' .. string.char(0)
+		.. string.char(0, 1) .. string.char(0, 1) -- type A class IN
+	local ans = string.char(0xc0, 0x0c) -- pointer to qname
+		.. string.char(0, 1) .. string.char(0, 1) -- A IN
+		.. string.char(0, 0, 0, 60) -- TTL
+		.. string.char(0, 4) .. string.char(93, 184, 216, 34)
+	local msg = string.char(0x12, 0x34) -- id
+		.. string.char(0x81, 0x80) -- response, recursion
+		.. string.char(0, 1) .. string.char(0, 1) .. string.char(0, 0) .. string.char(0, 0)
+		.. qname .. ans
+	local hits = sni.parse_dns_message(msg)
+	H.eq(hits['93.184.216.34'] and hits['93.184.216.34'].name, 'example.com')
+	H.eq(hits['93.184.216.34'].source, 'dns')
+end)

@@ -9,12 +9,15 @@ var callDevices = rpc.declare({ object: 'netmonitor', method: 'devices', params:
 var callDetail = rpc.declare({ object: 'netmonitor', method: 'device_detail', params: [ 'mac', 'day', 'sort' ] });
 var callGetConfig = rpc.declare({ object: 'netmonitor', method: 'get_config' });
 var callSetConfig = rpc.declare({ object: 'netmonitor', method: 'set_config',
-	params: [ 'db_path', 'interval', 'idle_gap', 'retention_value', 'retention_unit', 'enabled', 'sni_enable', 'confirm' ] });
+	params: [ 'db_path', 'interval', 'idle_gap', 'retention_value', 'retention_unit', 'enabled',
+		'sni_enable', 'asn_enable', 'asn_auto_update', 'asn_week_time', 'asn_day_time',
+		'asn_path', 'asn_url', 'confirm' ] });
 var callEstimate = rpc.declare({ object: 'netmonitor', method: 'estimate',
 	params: [ 'retention_value', 'retention_unit', 'db_path' ] });
 var callCheckPath = rpc.declare({ object: 'netmonitor', method: 'check_path', params: [ 'path' ] });
 var callPreparePath = rpc.declare({ object: 'netmonitor', method: 'prepare_path', params: [ 'path' ] });
 var callCollector = rpc.declare({ object: 'netmonitor', method: 'collector', params: [ 'action' ] });
+var callUpdateAsn = rpc.declare({ object: 'netmonitor', method: 'update_asn' });
 
 var UNIT_LABELS = { hour: '小时', day: '天', week: '周', month: '个月', year: '年' };
 
@@ -122,6 +125,12 @@ function statusBanners(st) {
 			out.push(banner('warn', _('未找到 dnsmasq 查询日志，域名归因将大量显示为 IP「未解析」。请确认设备使用路由器 DNS，并检查设置中的 DNS 日志路径。')));
 		else if (w === 'sni_unavailable')
 			out.push(banner('warn', _('未安装 tcpdump：无法对「未解析」目标做 TLS/HTTP 名字探测，仅使用 DNS。可选安装 tcpdump 后重启采集。')));
+		else if (w === 'asn_unavailable')
+			out.push(banner('warn', _('ASN 归属库不可用：请安装 lua-maxminddb，并在设置中下载 GeoLite2-ASN 数据库。'), [
+				E('a', { 'class': 'cbi-button', 'href': L.url('admin/control/netmonitor/settings') }, [ _('打开设置') ])
+			]));
+		else if (w === 'asn_update_failed')
+			out.push(banner('warn', _('ASN 数据库上次更新失败，可在设置中手动重试。')));
 		else if (w === 'retention_failed')
 			out.push(banner('warn', _('历史清理（保留期限）失败，采集写入仍在继续。详情：') + errorText(st.retention_detail || st.error || 'db_error')));
 	});
@@ -140,6 +149,7 @@ return baseclass.extend({
 	callCheckPath: callCheckPath,
 	callPreparePath: callPreparePath,
 	callCollector: callCollector,
+	callUpdateAsn: callUpdateAsn,
 	errorText: errorText,
 	cssLink: cssLink,
 	banner: banner,

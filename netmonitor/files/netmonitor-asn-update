@@ -1,0 +1,84 @@
+#!/bin/sh
+# Download / refresh GeoLite2-ASN.mmdb for netmonitor ASN org labels.
+# Usage: netmonitor-asn-update [--path PATH] [--url URL]
+set -e
+
+PATH_BIN=/usr/sbin:/usr/bin:/bin
+export PATH="$PATH_BIN:$PATH"
+
+ASN_PATH="$(uci -q get netmonitor.main.asn_path 2>/dev/null || true)"
+ASN_URL="$(uci -q get netmonitor.main.asn_url 2>/dev/null || true)"
+[ -n "$ASN_PATH" ] || ASN_PATH="/overlay/netmonitor/GeoLite2-ASN.mmdb"
+[ -n "$ASN_URL" ] || ASN_URL="https://cdn.jsdelivr.net/npm/geolite2-asn/GeoLite2-ASN.mmdb.gz"
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--path) ASN_PATH="$2"; shift 2 ;;
+		--url) ASN_URL="$2"; shift 2 ;;
+		*) echo "unknown arg: $1" >&2; exit 2 ;;
+	esac
+done
+
+STATUS_FILE="/overlay/netmonitor/asn-update.status"
+MIN_BYTES=1048576
+DIR="$(dirname "$ASN_PATH")"
+mkdir -p "$DIR"
+
+write_status() {
+	local state="$1" err="$2" bytes="$3"
+	local ts
+	ts="$(date +%s)"
+	printf '{"state":"%s","ts":%s,"error":"%s","bytes":%s,"path":"%s"}\n' \
+		"$state" "$ts" "$(echo "$err" | sed 's/"/\\"/g')" "${bytes:-0}" "$ASN_PATH" \
+		> "${STATUS_FILE}.tmp" && mv -f "${STATUS_FILE}.tmp" "$STATUS_FILE"
+}
+
+write_status "running" "" 0
+
+TMPDIR="$(mktemp -d /tmp/netmonitor-asn.XXXXXX)"
+trap 'rm -rf "$TMPDIR"' EXIT
+
+DL="$TMPDIR/download"
+OUT="$TMPDIR/GeoLite2-ASN.mmdb"
+
+if ! curl -fsSL --connect-timeout 15 -m 300 -o "$DL" "$ASN_URL"; then
+	write_status "error" "download_failed" 0
+	echo "download failed: $ASN_URL" >&2
+	exit 1
+fi
+
+# Accept gzip (magic 1f8b) or raw mmdb.
+magic="$(hexdump -n 2 -e '1/1 "%02x"' "$DL" 2>/dev/null || true)"
+if [ "$magic" = "1f8b" ] || gzip -t "$DL" 2>/dev/null; then
+	gunzip -c "$DL" > "$OUT"
+else
+	cp -f "$DL" "$OUT"
+fi
+
+BYTES="$(wc -c < "$OUT" | tr -d ' ')"
+if [ -z "$BYTES" ] || [ "$BYTES" -lt "$MIN_BYTES" ]; then
+	write_status "error" "too_small" "${BYTES:-0}"
+	echo "ASN DB too small ($BYTES bytes)" >&2
+	exit 1
+fi
+
+# Optional open-test when lua-maxminddb is present.
+if lua -e "require 'maxminddb'" 2>/dev/null; then
+	if ! NM_ASN_TEST="$OUT" lua -e '
+local m=require "maxminddb"
+local path=os.getenv("NM_ASN_TEST")
+local db=m.open(path)
+if not db then os.exit(1) end
+local r=db:lookup("8.8.8.8")
+if not r then os.exit(2) end
+' 2>/dev/null; then
+		write_status "error" "open_test_failed" "$BYTES"
+		echo "mmdb open/lookup test failed" >&2
+		exit 1
+	fi
+fi
+
+mv -f "$OUT" "$ASN_PATH"
+write_status "ok" "" "$BYTES"
+echo "ASN DB updated: $ASN_PATH ($BYTES bytes)"
+exit 0

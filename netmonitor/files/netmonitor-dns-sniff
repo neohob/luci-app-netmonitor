@@ -1,0 +1,28 @@
+#!/bin/sh
+# Internal helper of luci-app-netmonitor / netmonitor-collector (not a cron job).
+# Started/stopped by the collector process. Continuous DNS answer capture on LAN
+# (mosdns/passwall/dnsmasq-agnostic). Writes rotating pcaps for the collector.
+# Requires: tcpdump, timeout.
+set -e
+IFACE="${1:-br-lan}"
+RUNDIR=/var/run/netmonitor
+PCAP_TMP=/tmp/netmonitor-dns-capturing.pcap
+PCAP_READY=/tmp/netmonitor-dns-ready.pcap
+mkdir -p "$RUNDIR"
+echo $$ > "$RUNDIR/dns-sniff.pid"
+
+# Prefer LAN bridge; fall back if missing.
+[ -d "/sys/class/net/$IFACE" ] || IFACE=br-lan
+
+while true; do
+	rm -f "$PCAP_TMP"
+	# ~8s or 400 DNS packets per slice — covers most household query bursts.
+	timeout 8 tcpdump -i "$IFACE" -c 400 -nn -s 0 -w "$PCAP_TMP" "udp port 53" \
+		>/dev/null 2>&1 || true
+	if [ -s "$PCAP_TMP" ]; then
+		mv -f "$PCAP_TMP" "$PCAP_READY"
+	else
+		rm -f "$PCAP_TMP"
+		sleep 2
+	fi
+done

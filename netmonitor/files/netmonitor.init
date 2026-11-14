@@ -19,18 +19,29 @@ start_service() {
 	$PROG --check >/dev/null 2>&1 || return 1
 
 	# Re-apply dnsmasq query log wiring each start (F6 runtime health).
+	# ImmortalWrt/iStore often ship /etc/dnsmasq.conf with log-facility=/dev/null;
+	# UCI also emits log-facility → "illegal repeated keyword" and dnsmasq crash-loops,
+	# leaving the collector with an empty log (all targets 「未解析」). Neutralize the
+	# static file so only UCI's facility applies. Works with mosdns-as-upstream too:
+	# clients still hit dnsmasq:53 first, so query/reply lines are logged here.
 	local manage_dnsmasq dns_log
 	config_get_bool manage_dnsmasq main manage_dnsmasq 1
 	config_get dns_log main dns_log /tmp/netmonitor-dnsmasq.log
 	if [ "$manage_dnsmasq" = "1" ]; then
+		if [ -f /etc/dnsmasq.conf ] && grep -q '^log-facility=' /etc/dnsmasq.conf; then
+			[ -f /etc/dnsmasq.conf.bak-netmonitor ] || cp -a /etc/dnsmasq.conf /etc/dnsmasq.conf.bak-netmonitor
+			sed -i 's/^log-facility=.*/# log-facility disabled by netmonitor (UCI dhcp.@dnsmasq logfacility)/' /etc/dnsmasq.conf
+		fi
+		touch "$dns_log" 2>/dev/null || true
 		uci -q set dhcp.@dnsmasq[0].logqueries='1'
 		uci -q set dhcp.@dnsmasq[0].logfacility="$dns_log"
 		uci -q commit dhcp
-		/etc/init.d/dnsmasq reload >/dev/null 2>&1 || true
+		/etc/init.d/dnsmasq restart >/dev/null 2>&1 || /etc/init.d/dnsmasq reload >/dev/null 2>&1 || true
 	fi
 
 	[ "$enable_acct" = "1" ] && sysctl -w net.netfilter.nf_conntrack_acct=1 >/dev/null 2>&1
 
+	# Single procd instance: collector embeds DNS sniff + SNI (no cron, no extra service).
 	procd_open_instance
 	procd_set_param command $PROG
 	procd_set_param respawn 3600 5 5

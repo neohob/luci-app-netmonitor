@@ -28,11 +28,15 @@ cp "$ROOT/netmonitor/files/netmonitor.config" "$STAGE/netmonitor/etc/config/netm
 cp "$ROOT/netmonitor/files/netmonitor.init" "$STAGE/netmonitor/etc/init.d/netmonitor"
 cp "$ROOT/netmonitor/files/netmonitor.uci-defaults" "$STAGE/netmonitor/etc/uci-defaults/90-netmonitor"
 cp "$ROOT/netmonitor/files/netmonitor-collector" "$STAGE/netmonitor/usr/sbin/netmonitor-collector"
+cp "$ROOT/netmonitor/files/netmonitor-dns-sniff" "$STAGE/netmonitor/usr/sbin/netmonitor-dns-sniff"
+cp "$ROOT/netmonitor/files/netmonitor-asn-update" "$STAGE/netmonitor/usr/sbin/netmonitor-asn-update"
 cp "$ROOT/netmonitor/files/rpcd-netmonitor" "$STAGE/netmonitor/usr/libexec/rpcd/netmonitor"
 cp "$ROOT/netmonitor/files/lib/netmonitor/"*.lua "$STAGE/netmonitor/usr/lib/lua/netmonitor/"
 chmod 755 "$STAGE/netmonitor/etc/init.d/netmonitor" \
   "$STAGE/netmonitor/etc/uci-defaults/90-netmonitor" \
   "$STAGE/netmonitor/usr/sbin/netmonitor-collector" \
+  "$STAGE/netmonitor/usr/sbin/netmonitor-dns-sniff" \
+  "$STAGE/netmonitor/usr/sbin/netmonitor-asn-update" \
   "$STAGE/netmonitor/usr/libexec/rpcd/netmonitor"
 
 mkdir -p "$STAGE/luci"/{usr/share/luci/menu.d,usr/share/rpcd/acl.d}
@@ -54,6 +58,8 @@ cd /tmp/nm-deploy
 cp -a netmonitor/etc/init.d/netmonitor /etc/init.d/netmonitor
 cp -a netmonitor/etc/uci-defaults/90-netmonitor /etc/uci-defaults/90-netmonitor
 cp -a netmonitor/usr/sbin/netmonitor-collector /usr/sbin/netmonitor-collector
+cp -a netmonitor/usr/sbin/netmonitor-dns-sniff /usr/sbin/netmonitor-dns-sniff
+cp -a netmonitor/usr/sbin/netmonitor-asn-update /usr/sbin/netmonitor-asn-update
 mkdir -p /usr/libexec/rpcd /usr/lib/lua/netmonitor
 cp -a netmonitor/usr/libexec/rpcd/netmonitor /usr/libexec/rpcd/netmonitor
 cp -a netmonitor/usr/lib/lua/netmonitor/*.lua /usr/lib/lua/netmonitor/
@@ -62,10 +68,20 @@ cp -a luci/usr/share/rpcd/acl.d/luci-app-netmonitor.json /usr/share/rpcd/acl.d/
 mkdir -p /www/luci-static/resources/view/netmonitor /www/luci-static/resources/netmonitor
 cp -a luci/www/luci-static/resources/view/netmonitor/* /www/luci-static/resources/view/netmonitor/
 cp -a luci/www/luci-static/resources/netmonitor/* /www/luci-static/resources/netmonitor/
-chmod 755 /etc/init.d/netmonitor /usr/sbin/netmonitor-collector /usr/libexec/rpcd/netmonitor /etc/uci-defaults/90-netmonitor
+chmod 755 /etc/init.d/netmonitor /usr/sbin/netmonitor-collector /usr/sbin/netmonitor-dns-sniff /usr/sbin/netmonitor-asn-update /usr/libexec/rpcd/netmonitor /etc/uci-defaults/90-netmonitor
+# Ensure ASN UCI defaults exist on upgrades without wiping db_path.
+uci -q get netmonitor.main.asn_enable >/dev/null || uci -q set netmonitor.main.asn_enable=1
+uci -q get netmonitor.main.asn_auto_update >/dev/null || uci -q set netmonitor.main.asn_auto_update=1
+uci -q get netmonitor.main.asn_week_time >/dev/null || uci -q set netmonitor.main.asn_week_time='*'
+uci -q get netmonitor.main.asn_day_time >/dev/null || uci -q set netmonitor.main.asn_day_time=4
+uci -q get netmonitor.main.asn_path >/dev/null || uci -q set netmonitor.main.asn_path='/overlay/netmonitor/GeoLite2-ASN.mmdb'
+uci -q get netmonitor.main.asn_url >/dev/null || uci -q set netmonitor.main.asn_url='https://cdn.jsdelivr.net/npm/geolite2-asn/GeoLite2-ASN.mmdb.gz'
+uci -q commit netmonitor
+opkg list-installed | grep -q '^lua-maxminddb ' || opkg install libmaxminddb lua-maxminddb || true
 if [ ! -f /etc/netmonitor.uci-defaults.done ]; then
   sh /etc/uci-defaults/90-netmonitor && touch /etc/netmonitor.uci-defaults.done || true
 fi
+/etc/init.d/netmonitor restart
 /etc/init.d/rpcd restart
 /etc/init.d/uhttpd restart 2>/dev/null || true
 rm -rf /tmp/luci-* 2>/dev/null || true

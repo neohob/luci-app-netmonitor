@@ -77,13 +77,14 @@ function M.read_log(state, path)
 	if not last_nl then return '' end
 	state.offset = state.offset + last_nl
 	text = text:sub(1, last_nl)
-	-- Truncate via unlink then recreate empty inode (F20): avoid open('w') on the
-	-- live fd, but leave a path so health/dnsmasq reopen does not see "missing".
+	-- Rotate without unlink: dnsmasq keeps the old inode if we os.remove(); the new
+	-- empty path then stays forever empty (all targets 「未解析」). Truncate in place
+	-- and ask dnsmasq to reopen via HUP when possible.
 	if state.offset >= M.MAX_LOG then
-		os.remove(path)
 		local w = io.open(path, 'w')
 		if w then w:close() end
 		state.offset = 0
+		os.execute('/etc/init.d/dnsmasq reload >/dev/null 2>&1 || killall -HUP dnsmasq 2>/dev/null || true')
 	end
 	return text
 end
@@ -101,7 +102,8 @@ end
 
 -- Destination identity for a remote IP (domain preferred, else IP).
 -- Optional sni_hit: { name=, source='sni'|'http_host' } from the SNI probe cache.
-function M.target_for(state, client_ip, ip, now, sni_hit)
+-- Optional asn_name: org string from GeoLite2-ASN (never overrides DNS/SNI).
+function M.target_for(state, client_ip, ip, now, sni_hit, asn_name)
 	local name = M.lookup(state, client_ip, ip, now)
 	if name then
 		return { key = name, kind = 'domain', display = name, ip = ip,
@@ -111,6 +113,11 @@ function M.target_for(state, client_ip, ip, now, sni_hit)
 		local src = sni_hit.source or 'sni'
 		return { key = sni_hit.name, kind = 'domain', display = sni_hit.name, ip = ip,
 			unresolved = 0, source = src }
+	end
+	if asn_name and asn_name ~= '' then
+		-- Keep IP as session key so different hosts under one ASN stay separate.
+		return { key = ip, kind = 'ip', display = asn_name, ip = ip,
+			unresolved = 0, source = 'asn' }
 	end
 	return { key = ip, kind = 'ip', display = ip, ip = ip, unresolved = 1, source = 'ip' }
 end

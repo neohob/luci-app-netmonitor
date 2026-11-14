@@ -12,6 +12,7 @@ H.case('W1', 'set_config without path, collector start refused, status need_wiza
 		cfg = H.cfg({ db_path = '' }), now = os.time(), rundir = rundir,
 		saver = function(c) saved = c end,
 		runner = function(cmd) ran[#ran + 1] = cmd end,
+		cron_runner = false,
 		uci_get = function() return nil end,
 	}
 	local r = api.call('set_config', { interval = 5, idle_gap = 60 }, env)
@@ -33,6 +34,7 @@ H.case('W1', 'set_config without path, collector start refused, status need_wiza
 
 	local bad = api.call('set_config', { db_path = '/mnt/usb' },
 		{ cfg = env.cfg, now = env.now, rundir = rundir, saver = env.saver, runner = env.runner,
+			cron_runner = false,
 			fsops = H.fsops(10 * H.GiB, 32 * H.GiB, false) })
 	H.eq(bad.ok, false, 'unwritable path rejected')
 	H.eq(bad.error, 'path_not_writable', 'unwritable error')

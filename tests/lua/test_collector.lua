@@ -223,7 +223,7 @@ H.case('W22', 'retention_error keeps running (not db_error / not write-pause) (F
 	H.rmrf(dir)
 end)
 
-H.case('W23', 'dns log unlink recreates empty file (F20)', function()
+H.case('W23', 'dns log truncates in place without unlink (F20)', function()
 	local dns = require 'netmonitor.dns'
 	local dir = H.tmpdir()
 	local path = dir .. '/dnsmasq.log'
@@ -236,9 +236,11 @@ H.case('W23', 'dns log unlink recreates empty file (F20)', function()
 	dns.MAX_LOG = 10
 	dns.read_log(state, path)
 	local f2 = io.open(path, 'r')
-	H.ok(f2 ~= nil, 'path recreated after truncate')
+	H.ok(f2 ~= nil, 'path still present after truncate')
+	local sz = f2 and f2:seek('end') or -1
 	if f2 then f2:close() end
-	H.eq(dns.health(path).ok, true, 'health ok after recreate')
+	H.eq(sz, 0, 'truncated to empty')
+	H.eq(dns.health(path).ok, true, 'health ok after truncate')
 	dns.MAX_LOG = old
 	H.rmrf(dir)
 end)

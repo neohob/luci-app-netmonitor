@@ -69,11 +69,15 @@ cp "$ROOT/netmonitor/files/netmonitor.config" "$NM_DATA/etc/config/netmonitor"
 cp "$ROOT/netmonitor/files/netmonitor.init" "$NM_DATA/etc/init.d/netmonitor"
 cp "$ROOT/netmonitor/files/netmonitor.uci-defaults" "$NM_DATA/etc/uci-defaults/90-netmonitor"
 cp "$ROOT/netmonitor/files/netmonitor-collector" "$NM_DATA/usr/sbin/netmonitor-collector"
+cp "$ROOT/netmonitor/files/netmonitor-dns-sniff" "$NM_DATA/usr/sbin/netmonitor-dns-sniff"
+cp "$ROOT/netmonitor/files/netmonitor-asn-update" "$NM_DATA/usr/sbin/netmonitor-asn-update"
 cp "$ROOT/netmonitor/files/rpcd-netmonitor" "$NM_DATA/usr/libexec/rpcd/netmonitor"
 cp "$ROOT/netmonitor/files/lib/netmonitor/"*.lua "$NM_DATA/usr/lib/lua/netmonitor/"
 chmod 755 "$NM_DATA/etc/init.d/netmonitor" \
   "$NM_DATA/etc/uci-defaults/90-netmonitor" \
   "$NM_DATA/usr/sbin/netmonitor-collector" \
+  "$NM_DATA/usr/sbin/netmonitor-dns-sniff" \
+  "$NM_DATA/usr/sbin/netmonitor-asn-update" \
   "$NM_DATA/usr/libexec/rpcd/netmonitor"
 
 mkdir -p "$STAGE/extra-control/netmonitor"
@@ -281,6 +285,9 @@ cat "$R/head" "$STAGE/payload.tar.gz" > "$RUN"
 chmod 755 "$RUN"
 echo "built $RUN"
 
-( cd "$OUT" && shasum -a 256 *.ipk *.run > SHA256SUMS )
+( cd "$OUT" && shasum -a 256 \
+  "netmonitor_${NM_FULL}_all.ipk" \
+  "luci-app-netmonitor_${LUCI_FULL}_all.ipk" \
+  "luci-app-netmonitor_${LUCI_FULL}_all.run" > SHA256SUMS )
 echo "==> artifacts in $OUT"
 ls -la "$OUT"

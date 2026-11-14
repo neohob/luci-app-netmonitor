@@ -156,7 +156,7 @@ H.case('W15', 'rpcd ACL: read/write split; check_path read-only (no FS mutate)',
 		H.ok(read[m], 'read has ' .. m)
 		H.ok(not write[m], 'write lacks ' .. m)
 	end
-	for _, m in ipairs({ 'set_config', 'collector', 'prepare_path' }) do
+	for _, m in ipairs({ 'set_config', 'collector', 'prepare_path', 'update_asn' }) do
 		H.ok(write[m], 'write has ' .. m)
 		H.ok(not read[m], 'read lacks ' .. m)
 	end
@@ -252,6 +252,7 @@ H.case('W20', 'set_config enabled=0 stops collector (F8)', function()
 		now = os.time(),
 		saver = function(c) saved = c end,
 		runner = function(cmd) ran[#ran + 1] = cmd; return true end,
+		cron_runner = false,
 		fsops = H.fsops(10 * H.GiB, 32 * H.GiB, true),
 	}
 	local r = api.call('set_config', { enabled = 0 }, env)

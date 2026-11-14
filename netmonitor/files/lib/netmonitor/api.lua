@@ -7,6 +7,7 @@ local disk = require 'netmonitor.disk'
 local timeutil = require 'netmonitor.timeutil'
 local topology = require 'netmonitor.topology'
 local detail = require 'netmonitor.detail'
+local asn = require 'netmonitor.asn'
 local json = require 'netmonitor.json'
 
 local M = {}
@@ -72,12 +73,19 @@ local function resolve(env, args)
 end
 
 local function pair_rows(path, since)
+	-- Prefer targets.display when resolved; else backfill from ip_names (DNS/SNI sniff),
+	-- so older IP-keyed rows light up after names are learned.
 	return q(path, string.format([[
-SELECT s.device, s.target, s.up, s.down, d.ip, d.hostname, t.display, t.unresolved, t.source
+SELECT s.device, s.target, s.up, s.down, d.ip, d.hostname,
+  COALESCE(CASE WHEN t.unresolved = 0 THEN t.display END, n.name, n2.name, t.display, s.target) AS display,
+  CASE WHEN t.unresolved = 0 OR n.name IS NOT NULL OR n2.name IS NOT NULL THEN 0 ELSE 1 END AS unresolved,
+  COALESCE(CASE WHEN t.unresolved = 0 THEN t.source END, n.source, n2.source, t.source, 'ip') AS source
 FROM (SELECT device, target, SUM(bytes_up) AS up, SUM(bytes_down) AS down
       FROM traffic_samples WHERE ts >= %s GROUP BY device, target) s
 LEFT JOIN devices d ON d.mac = s.device
-LEFT JOIN targets t ON t.key = s.target;]], db.quote(since)))
+LEFT JOIN targets t ON t.key = s.target
+LEFT JOIN ip_names n ON n.ip = s.target
+LEFT JOIN ip_names n2 ON t.ip IS NOT NULL AND n2.ip = t.ip;]], db.quote(since)))
 end
 
 local function storage_stats(path)
@@ -141,6 +149,17 @@ function M.status(args, env)
 		local dup = false
 		for _, w in ipairs(out.warnings) do if w == 'sni_unavailable' then dup = true end end
 		if not dup then out.warnings[#out.warnings + 1] = 'sni_unavailable' end
+	end
+	out.asn = st.asn or asn.status(nil, cfg)
+	if out.asn.enabled and not out.asn.available then
+		local dup = false
+		for _, w in ipairs(out.warnings) do if w == 'asn_unavailable' then dup = true end end
+		if not dup then out.warnings[#out.warnings + 1] = 'asn_unavailable' end
+	end
+	if out.asn.update and out.asn.update.state == 'error' then
+		local dup = false
+		for _, w in ipairs(out.warnings) do if w == 'asn_update_failed' then dup = true end end
+		if not dup then out.warnings[#out.warnings + 1] = 'asn_update_failed' end
 	end
 	return out
 end
@@ -370,6 +389,11 @@ function M.set_config(args, env)
 	local saver = env.saver or config.save
 	saver(cfg)
 	env.cfg = cfg
+	-- Keep ASN cron in sync with settings (PassWall-style visible schedule).
+	-- Tests set cron_runner=false to skip; production uses os.execute.
+	if env.cron_runner ~= false then
+		pcall(asn.sync_cron, cfg, env.cron_runner or os.execute)
+	end
 	-- Honour enabled=0 / stop intent (F8).
 	if cfg.db_path == '' then
 		-- no collector without path
@@ -379,6 +403,10 @@ function M.set_config(args, env)
 		restart(env, 'restart')
 	end
 	return out
+end
+
+function M.update_asn(args, env)
+	return asn.start_update(env.cfg, env.runner)
 end
 
 function M.collector(args, env)
@@ -405,7 +433,12 @@ M.METHODS = {
 	check_path = { path = '/mnt/usb' },
 	prepare_path = { path = '/mnt/usb' },
 	set_config = { db_path = '/mnt/usb', interval = 5, idle_gap = 60,
-		retention_value = 30, retention_unit = 'day', enabled = 1, sni_enable = 1, confirm = true },
+		retention_value = 30, retention_unit = 'day', enabled = 1, sni_enable = 1,
+		asn_enable = 1, asn_auto_update = 1, asn_week_time = '*', asn_day_time = 4,
+		asn_path = '/overlay/netmonitor/GeoLite2-ASN.mmdb',
+		asn_url = 'https://cdn.jsdelivr.net/npm/geolite2-asn/GeoLite2-ASN.mmdb.gz',
+		confirm = true },
+	update_asn = json.object(),
 	collector = { action = 'start' },
 }
 

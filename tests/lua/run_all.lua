@@ -7,5 +7,6 @@ require 'test_collector'
 require 'test_api'
 require 'test_json'
 require 'test_sni'
+require 'test_asn'
 
 if not H.summary() then os.exit(1) end

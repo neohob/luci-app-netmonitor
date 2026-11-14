@@ -33,7 +33,13 @@ return view.extend({
 			idle_gap: parseInt(this.inIdle.value, 10),
 			retention_value: parseInt(this.inRetention.value, 10),
 			retention_unit: this.inUnit.value,
-			sni_enable: this.inSni && this.inSni.checked ? 1 : 0
+			sni_enable: this.inSni && this.inSni.checked ? 1 : 0,
+			asn_enable: this.inAsn && this.inAsn.checked ? 1 : 0,
+			asn_auto_update: this.inAsnAuto && this.inAsnAuto.checked ? 1 : 0,
+			asn_week_time: this.inAsnWeek ? this.inAsnWeek.value : '*',
+			asn_day_time: this.inAsnHour ? parseInt(this.inAsnHour.value, 10) : 4,
+			asn_path: this.inAsnPath ? this.inAsnPath.value.trim() : '',
+			asn_url: this.inAsnUrl ? this.inAsnUrl.value.trim() : ''
 		};
 	},
 
@@ -102,7 +108,9 @@ return view.extend({
 			}
 			/* Wizard forces enable; otherwise keep current enabled (F8). */
 			var enable = self.wizard ? 1 : (self.cfg.enabled == null ? 1 : self.cfg.enabled);
-			return nm.callSetConfig(v.db_path, v.interval, v.idle_gap, v.retention_value, v.retention_unit, enable, v.sni_enable, confirm ? true : null)
+			return nm.callSetConfig(v.db_path, v.interval, v.idle_gap, v.retention_value, v.retention_unit, enable,
+					v.sni_enable, v.asn_enable, v.asn_auto_update, v.asn_week_time, v.asn_day_time,
+					v.asn_path, v.asn_url, confirm ? true : null)
 				.then(function(res) {
 					if (res && res.need_confirm) {
 						ui.showModal(_('缩短保留期限'), [
@@ -200,21 +208,167 @@ return view.extend({
 				(function() {
 					self.inSni = E('input', { 'type': 'checkbox' });
 					self.inSni.checked = cfg.sni_enable == null ? true : Number(cfg.sni_enable) !== 0;
-					var mode = (st.sni && st.sni.mode) || '';
-					var tip = _('对 DNS 未能解析的远程 IP，短时抓取新建 TCP 443/80 握手中的 SNI 或 Host。');
+					var tip = _('由采集器内置：持续嗅探局域网 DNS 应答，并对仍未解析的 IP 抓取 TLS SNI / HTTP Host（需 tcpdump）。随 netmonitor 启停，无需系统定时任务。');
 					if (st.sni) {
-						tip += ' ' + _('当前：') + (st.sni.available
-							? _('tcpdump 可用') + (st.sni.enabled ? _('，已启用') : _('，已关闭'))
-							: _('未检测到 tcpdump（仅 DNS）'));
+						tip += ' ' + _('当前：') + (st.sni.enabled ? _('已启用') : _('已关闭'));
+						if (st.sni.available)
+							tip += ' · tcpdump OK';
+						else
+							tip += ' · ' + _('未检测到 tcpdump');
+						if (st.sni.dns_sniff)
+							tip += ' · ' + _('DNS 嗅探运行中');
 						if (st.sni.ok != null)
-							tip += ' · ' + _('累计命中 %d / 失败 %d').format(st.sni.ok || 0, st.sni.fail || 0);
+							tip += ' · SNI ' + _('命中 %d / 失败 %d').format(st.sni.ok || 0, st.sni.fail || 0);
 					}
-					return self.field(_('探测未解析目标的 TLS/HTTP 名字'), E('label', {}, [
-						self.inSni, ' ', _('启用（仅未解析 IP）')
+					return self.field(_('目标名字探测（DNS 嗅探 + SNI）'), E('label', {}, [
+						self.inSni, ' ', _('启用')
 					]), tip);
 				})()
 			]),
+			this.renderAsnSection(cfg, st),
 			controls
+		]);
+	},
+
+	formatBytes: function(n) {
+		n = Number(n) || 0;
+		if (n < 1024) return n + ' B';
+		if (n < 1048576) return (n / 1024).toFixed(1) + ' KiB';
+		if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MiB';
+		return (n / 1073741824).toFixed(2) + ' GiB';
+	},
+
+	asnStatusText: function(st) {
+		var a = (st && st.asn) || {};
+		var parts = [];
+		if (!a.binding)
+			parts.push(_('未安装 lua-maxminddb（opkg install lua-maxminddb）'));
+		else
+			parts.push(_('lua-maxminddb 已安装'));
+		if (a.size)
+			parts.push(_('库文件 %s').format(this.formatBytes(a.size)) +
+				(a.mtime ? _(' · 更新于 %s').format(new Date(a.mtime * 1000).toLocaleString()) : ''));
+		else
+			parts.push(_('尚未下载 ASN 数据库'));
+		var u = a.update || {};
+		if (u.state === 'running')
+			parts.push(_('正在更新…'));
+		else if (u.state === 'ok' && u.ts)
+			parts.push(_('上次更新成功 · %s').format(new Date(u.ts * 1000).toLocaleString()));
+		else if (u.state === 'error')
+			parts.push(_('上次更新失败：%s').format(u.error || '?'));
+		if (a.hits != null)
+			parts.push(_('本进程命中 %d').format(a.hits || 0));
+		return parts.join(' · ');
+	},
+
+	pollAsnUpdate: function(tries) {
+		var self = this;
+		tries = tries || 0;
+		return nm.callStatus().then(function(st) {
+			self.st = st || self.st;
+			if (self.asnStatusBox)
+				dom.content(self.asnStatusBox, self.asnStatusText(st));
+			var u = st && st.asn && st.asn.update;
+			if (u && u.state === 'running' && tries < 90) {
+				return new Promise(function(resolve) {
+					window.setTimeout(function() {
+						resolve(self.pollAsnUpdate(tries + 1));
+					}, 2000);
+				});
+			}
+			if (u && u.state === 'ok')
+				ui.addNotification(null, E('p', _('ASN 数据库更新成功')), 'info');
+			else if (u && u.state === 'error')
+				ui.addNotification(null, E('p', _('ASN 更新失败：') + (u.error || '')), 'danger');
+			return st;
+		});
+	},
+
+	updateAsnNow: function() {
+		var self = this, v = this.values();
+		/* Persist URL/path first so the updater reads current settings. */
+		return nm.callSetConfig(v.db_path, v.interval, v.idle_gap, v.retention_value, v.retention_unit,
+			this.cfg.enabled == null ? 1 : this.cfg.enabled,
+			v.sni_enable, v.asn_enable, v.asn_auto_update, v.asn_week_time, v.asn_day_time,
+			v.asn_path, v.asn_url, null).then(function(res) {
+			if (!res || !res.ok) {
+				ui.addNotification(null, E('p', nm.errorText(res && res.error)), 'danger');
+				return;
+			}
+			return nm.callUpdateAsn().then(function(r) {
+				if (!r || !r.ok) {
+					ui.addNotification(null, E('p', nm.errorText(r && r.error)), 'danger');
+					return;
+				}
+				if (r.busy)
+					ui.addNotification(null, E('p', _('ASN 更新已在进行中')), 'warning');
+				else
+					ui.addNotification(null, E('p', _('已开始下载 ASN 数据库…')), 'info');
+				return self.pollAsnUpdate(0);
+			});
+		});
+	},
+
+	renderAsnSection: function(cfg, st) {
+		var self = this;
+		var a = (st && st.asn) || {};
+		this.inAsn = E('input', { 'type': 'checkbox' });
+		this.inAsn.checked = cfg.asn_enable == null ? true : Number(cfg.asn_enable) !== 0;
+		this.inAsnAuto = E('input', { 'type': 'checkbox' });
+		this.inAsnAuto.checked = cfg.asn_auto_update == null ? true : Number(cfg.asn_auto_update) !== 0;
+		this.inAsnPath = E('input', { 'class': 'cbi-input-text', 'type': 'text',
+			'value': cfg.asn_path || '/overlay/netmonitor/GeoLite2-ASN.mmdb',
+			'style': 'width:100%;max-width:36em' });
+		var urls = [
+			'https://cdn.jsdelivr.net/npm/geolite2-asn/GeoLite2-ASN.mmdb.gz',
+			'https://cdn.jsdelivr.net/npm/@geo-mmd/geolite2-asn/GeoLite2-ASN.mmdb',
+			'https://cdn.jsdelivr.net/gh/P3TERX/GeoLite.mmdb@download/GeoLite2-ASN.mmdb'
+		];
+		var curUrl = cfg.asn_url || urls[0];
+		this.inAsnUrl = E('select', { 'class': 'cbi-input-select', 'style': 'max-width:36em' },
+			urls.map(function(u) {
+				return E('option', { 'value': u, 'selected': u === curUrl ? '' : null }, u.replace(/^https:\/\//, ''));
+			}).concat([
+				/* allow current custom URL if not in presets */
+				urls.indexOf(curUrl) < 0 ? E('option', { 'value': curUrl, 'selected': '' }, curUrl) : ''
+			]));
+		var week = String(cfg.asn_week_time == null ? '*' : cfg.asn_week_time);
+		var weekOpts = [
+			['*', _('每天')], ['0', _('周日')], ['1', _('周一')], ['2', _('周二')],
+			['3', _('周三')], ['4', _('周四')], ['5', _('周五')], ['6', _('周六')]
+		];
+		this.inAsnWeek = E('select', { 'class': 'cbi-input-select' }, weekOpts.map(function(o) {
+			return E('option', { 'value': o[0], 'selected': o[0] === week ? '' : null }, o[1]);
+		}));
+		var hour = Number(cfg.asn_day_time != null ? cfg.asn_day_time : 4);
+		this.inAsnHour = E('select', { 'class': 'cbi-input-select' }, Array.apply(null, Array(24)).map(function(_unused, i) {
+			return E('option', { 'value': String(i), 'selected': i === hour ? '' : null },
+				_('%d 点').format(i));
+		}));
+		this.asnStatusBox = E('div', { 'class': 'cbi-value-description' }, this.asnStatusText(st));
+
+		return E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, _('ASN 归属库')),
+			E('p', { 'class': 'cbi-value-description' },
+				_('DNS / SNI 仍无法命名时，用 GeoLite2-ASN 显示组织名（如 Google、阿里云）。与 PassWall / MosDNS 的 geoip 分流库无关，本应用独立下载与更新。')),
+			this.field(_('启用 ASN 回填'), E('label', {}, [ this.inAsn, ' ', _('启用') ]),
+				_('需安装：opkg install libmaxminddb lua-maxminddb')),
+			this.field(_('数据库路径'), this.inAsnPath, _('默认放在 /overlay/netmonitor/，约 8–12 MiB。')),
+			this.field(_('更新 URL'), this.inAsnUrl, _('可选用 jsDelivr 镜像；保存设置后生效。')),
+			this.field(_('自动更新'), E('div', {}, [
+				E('label', {}, [ this.inAsnAuto, ' ', _('启用定时更新') ]),
+				E('div', { 'style': 'margin-top:.5em' }, [
+					this.inAsnWeek, ' ', this.inAsnHour
+				])
+			]), _('写入系统 crontab（带 # netmonitor-asn-update 标记）；关闭自动更新会移除该行。')),
+			this.field(_('手动更新'), E('div', {}, [
+				E('button', {
+					'class': 'cbi-button cbi-button-apply',
+					'click': ui.createHandlerFn(this, 'updateAsnNow')
+				}, _('立即更新 ASN 数据库')),
+				this.asnStatusBox
+			]), _('先保存当前 URL/路径再下载；进度会显示在下方。'))
 		]);
 	},
 

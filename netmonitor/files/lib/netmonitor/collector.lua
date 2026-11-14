@@ -4,6 +4,7 @@ local conntrack = require 'netmonitor.conntrack'
 local neigh = require 'netmonitor.neigh'
 local dns = require 'netmonitor.dns'
 local sni = require 'netmonitor.sni'
+local asn = require 'netmonitor.asn'
 local session = require 'netmonitor.session'
 local live = require 'netmonitor.live'
 local disk = require 'netmonitor.disk'
@@ -97,8 +98,10 @@ function M.new(cfg, opts)
 		live = live.new(),
 		dns = dns.new(),
 		sni = sni.new(),
+		asn = asn.new(),
 		last_retention = 0,
 		sni_status = nil,
+		asn_status = nil,
 	}
 	return ctx
 end
@@ -111,6 +114,7 @@ function M.init_db(ctx)
 	session.restore(ctx.sess, rows)
 	local names = db.query(ctx.db_file, 'SELECT ip, name, source, updated_at FROM ip_names;') or {}
 	dns.load_persisted(ctx.dns, names, os.time())
+	asn.load_persisted(ctx.asn, names)
 	for _, r in ipairs(names) do
 		if r.source == 'sni' or r.source == 'http_host' then
 			sni.remember(ctx.sni, r.ip, r.name, r.source, tonumber(r.updated_at) or os.time())
@@ -197,16 +201,22 @@ function M.poll(ctx, now)
 		local mac, dev_ip, remote, dir = M.classify(d.entry, snap)
 		if mac then
 			local sni_hit = sni.lookup(ctx.sni, remote, now)
-			local t = dns.target_for(ctx.dns, dev_ip, remote, now, sni_hit)
+			local asn_name = nil
+			if not dns.lookup(ctx.dns, dev_ip, remote, now) and not (sni_hit and sni_hit.name) then
+				asn_name = asn.lookup(ctx.asn, remote, cfg)
+			end
+			local t = dns.target_for(ctx.dns, dev_ip, remote, now, sni_hit, asn_name)
 			if tonumber(t.unresolved) == 1 and not unresolved_seen[remote] then
 				unresolved_seen[remote] = true
 				unresolved_ips[#unresolved_ips + 1] = remote
 			end
-			-- Queue DNS/SNI names for persistence
+			-- Queue DNS/SNI/ASN names for persistence
 			if t.source == 'dns' and t.ip and t.display then
 				ip_name_rows[#ip_name_rows + 1] = { ip = t.ip, name = t.display, source = 'dns', ts = now }
 			elseif (t.source == 'sni' or t.source == 'http_host') and t.ip and t.display then
 				ip_name_rows[#ip_name_rows + 1] = { ip = t.ip, name = t.display, source = t.source, ts = now }
+			elseif t.source == 'asn' and t.ip and t.display then
+				ip_name_rows[#ip_name_rows + 1] = { ip = t.ip, name = t.display, source = 'asn', ts = now }
 			end
 			local up = (dir == 'orig') and d.d_orig or d.d_reply
 			local down = (dir == 'orig') and d.d_reply or d.d_orig
@@ -225,17 +235,42 @@ function M.poll(ctx, now)
 		end
 	end
 
-	-- SNI/Host probe for unresolved remotes (best-effort; may block briefly).
-	local probe = sni.probe_unresolved(ctx.sni, unresolved_ips, cfg, now)
+	-- Wire sniff: DNS answers + SNI/Host for unresolved (best-effort; may block briefly).
+	-- Needed when dnsmasq query-log is empty (common with ujail) or mosdns/passwall is in path.
+	local probe = sni.probe_unresolved(ctx.sni, unresolved_ips, cfg, now, ctx.dns)
 	res.sni = probe
 	ctx.sni_status = sni.status(ctx.sni, cfg)
 	if probe and not probe.skipped and probe.found and probe.found > 0 then
+		for ip, hit in pairs(ctx.dns.by_ip) do
+			if hit.ts == now then
+				ip_name_rows[#ip_name_rows + 1] = { ip = ip, name = hit.name, source = 'dns', ts = now }
+			end
+		end
 		for ip, hit in pairs(ctx.sni.by_ip) do
 			if hit.ts == now then
 				ip_name_rows[#ip_name_rows + 1] = { ip = ip, name = hit.name, source = hit.source, ts = now }
 			end
 		end
 	end
+
+	-- ASN org for IPs still unresolved after DNS + SNI (same tick + cache).
+	local asn_found = 0
+	for _, ip in ipairs(unresolved_ips) do
+		if not dns.lookup(ctx.dns, nil, ip, now) and not sni.lookup(ctx.sni, ip, now) then
+			local org = asn.lookup(ctx.asn, ip, cfg)
+			if org then
+				asn_found = asn_found + 1
+				ip_name_rows[#ip_name_rows + 1] = { ip = ip, name = org, source = 'asn', ts = now }
+				if targets[ip] and tonumber(targets[ip].unresolved) == 1 then
+					targets[ip].display = org
+					targets[ip].unresolved = 0
+					targets[ip].source = 'asn'
+				end
+			end
+		end
+	end
+	res.asn = { found = asn_found }
+	ctx.asn_status = asn.status(ctx.asn, cfg)
 
 	-- Disk gate before stitch/live/SQL so pause does not skew sessions (F4).
 	local chk = disk.check(cfg.db_path, cfg, ctx.statfs)
@@ -302,6 +337,13 @@ function M.status_payload(ctx, res, now)
 	if (tonumber(ctx.cfg.sni_enable) or 1) ~= 0 and not ss.available then
 		warnings[#warnings + 1] = 'sni_unavailable'
 	end
+	local as = ctx.asn_status or asn.status(ctx.asn, ctx.cfg)
+	if (tonumber(ctx.cfg.asn_enable) or 1) ~= 0 and not as.available then
+		warnings[#warnings + 1] = 'asn_unavailable'
+	end
+	if as.update and as.update.state == 'error' then
+		warnings[#warnings + 1] = 'asn_update_failed'
+	end
 	return {
 		state = state,
 		updated = now,
@@ -314,6 +356,7 @@ function M.status_payload(ctx, res, now)
 		disk = res.disk,
 		warnings = warnings,
 		sni = ss,
+		asn = as,
 		live = json.object(snap.devices),
 		live_pairs = pairs_live,
 	}

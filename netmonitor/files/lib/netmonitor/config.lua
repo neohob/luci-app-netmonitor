@@ -17,17 +17,25 @@ M.DEFAULTS = {
 	manage_dnsmasq = 1,
 	enable_acct = 1,
 	sni_enable = 1,
+	asn_enable = 1,
+	asn_auto_update = 1,
+	asn_week_time = '*',
+	asn_day_time = 4,
+	asn_path = '/overlay/netmonitor/GeoLite2-ASN.mmdb',
+	asn_url = 'https://cdn.jsdelivr.net/npm/geolite2-asn/GeoLite2-ASN.mmdb.gz',
 }
 
 local NUMERIC = {
 	enabled = true, interval = true, idle_gap = true, retention_value = true,
 	reserve_min_mb = true, reserve_pct = true, manage_dnsmasq = true, enable_acct = true,
-	sni_enable = true,
+	sni_enable = true, asn_enable = true, asn_auto_update = true, asn_day_time = true,
 }
 
 -- Settable from the UI; everything else is UCI-only.
 M.SETTABLE = { db_path = true, interval = true, idle_gap = true,
-	retention_value = true, retention_unit = true, enabled = true, sni_enable = true }
+	retention_value = true, retention_unit = true, enabled = true, sni_enable = true,
+	asn_enable = true, asn_auto_update = true, asn_week_time = true, asn_day_time = true,
+	asn_path = true, asn_url = true }
 
 local function shell_quote(s)
 	return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
@@ -75,6 +83,16 @@ function M.validate(cur, patch)
 	if cfg.retention_value < 1 or cfg.retention_value % 1 ~= 0 then return nil, 'bad_retention' end
 	if not timeutil.UNITS[cfg.retention_unit] then return nil, 'bad_retention_unit' end
 	if cfg.db_path ~= '' and not cfg.db_path:match('^/') then return nil, 'path_not_absolute' end
+	if cfg.asn_path ~= '' and not cfg.asn_path:match('^/') then return nil, 'asn_path_not_absolute' end
+	if cfg.asn_url ~= '' and not cfg.asn_url:match('^https?://') then return nil, 'bad_asn_url' end
+	local day = tonumber(cfg.asn_day_time)
+	if not day or day < 0 or day > 23 or day % 1 ~= 0 then return nil, 'bad_asn_day_time' end
+	local week = tostring(cfg.asn_week_time or '*')
+	if week ~= '*' then
+		local w = tonumber(week)
+		if not w or w < 0 or w > 6 or w % 1 ~= 0 then return nil, 'bad_asn_week_time' end
+	end
+	cfg.asn_week_time = week
 	return cfg
 end
 

@@ -1,7 +1,9 @@
 #!/usr/bin/lua
 -- netmonitor collector daemon (run by procd via /etc/init.d/netmonitor).
+-- Owns DNS sniff + SNI naming as in-process helpers (no cron, no extra init service).
 local config = require 'netmonitor.config'
 local collector = require 'netmonitor.collector'
+local sni = require 'netmonitor.sni'
 
 local cfg = config.load()
 local rundir = collector.RUNDIR
@@ -14,6 +16,7 @@ local function base_state(state, extra)
 end
 
 if arg[1] == '--mark-stopped' then
+	sni.stop_dns_sniff()
 	collector.write_state(rundir, base_state('stopped'))
 	os.exit(0)
 end
@@ -35,8 +38,13 @@ if not ok then
 	os.exit(3)
 end
 
+-- Bundled continuous DNS capture (same package / same lifecycle as collector).
+sni.start_dns_sniff(cfg, rundir)
+
 while true do
 	local started = os.time()
+	-- Keep sniff alive across respawns / accidental exits.
+	sni.start_dns_sniff(cfg, rundir)
 	local okp, res = pcall(collector.poll, ctx, started)
 	if okp then
 		collector.write_state(rundir, collector.status_payload(ctx, res, started))

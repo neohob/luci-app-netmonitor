@@ -86,6 +86,8 @@ return view.extend({
 			tags.push(E('span', { 'class': 'nm-tag nm-tag-sni', 'title': _('来自 TLS ClientHello SNI') }, 'SNI'));
 		else if (n.kind === 'target' && n.source === 'http_host')
 			tags.push(E('span', { 'class': 'nm-tag nm-tag-sni', 'title': _('来自 HTTP Host') }, 'Host'));
+		else if (n.kind === 'target' && n.source === 'asn')
+			tags.push(E('span', { 'class': 'nm-tag nm-tag-asn', 'title': _('来自 GeoLite2 ASN 组织名') }, 'ASN'));
 
 		var ports = [];
 		var offs = topo.slotOffsets(slotCount, SLOT_SPACING);
