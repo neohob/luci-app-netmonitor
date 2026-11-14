@@ -1,6 +1,6 @@
 local M = {}
 
-M.VERSION = 2
+M.VERSION = 3
 
 -- Base schema (idempotent). Future ALTER steps go in M.MIGRATIONS[version].
 M.SQL = [[
@@ -51,6 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_last ON sessions(last_seen_at);
 -- Per-version upgrade scripts (applied after base CREATE IF NOT EXISTS).
 -- [1] = empty: version stamp only after base schema.
 -- [2] = destination source + persistent IP→name map (v0.2 resolve).
+-- [3] = ASN display demoted to IP (org stays in ip_names); service CIDR labels.
 M.MIGRATIONS = {
 	[1] = '',
 	[2] = [[
@@ -62,6 +63,11 @@ CREATE TABLE IF NOT EXISTS ip_names (
 	source TEXT NOT NULL,
 	updated_at INTEGER NOT NULL
 );
+]],
+	[3] = [[
+UPDATE targets SET display = key
+ WHERE source = 'asn' AND kind = 'ip'
+   AND display IS NOT NULL AND display != key;
 ]],
 }
 

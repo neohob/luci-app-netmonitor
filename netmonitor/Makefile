@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=netmonitor
-PKG_VERSION:=0.4.3
+PKG_VERSION:=0.5.0
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 
@@ -12,14 +12,15 @@ define Package/netmonitor
   CATEGORY:=Network
   TITLE:=Per-device traffic collector (conntrack + DNS + SQLite)
   DEPENDS:=+lua +sqlite3-cli +ip-tiny
-  # Soft: tcpdump (SNI/Host), lua-maxminddb (ASN org labels).
+  # Soft: tcpdump (SNI/Host), lua-maxminddb (ASN tags), curl (service CIDR pack).
   PKGARCH:=all
 endef
 
 define Package/netmonitor/description
   Samples nf_conntrack byte counters, correlates destinations with dnsmasq
-  DNS answers (optional TLS SNI / HTTP Host and GeoLite2 ASN for unresolved
-  IPs), and stores device -> destination upload/download traffic in SQLite.
+  DNS answers (optional TLS SNI / HTTP Host, cloud/CDN service CIDRs, and
+  GeoLite2 ASN tags for unresolved IPs), and stores device -> destination
+  upload/download traffic in SQLite.
 endef
 
 define Package/netmonitor/conffiles
@@ -38,6 +39,7 @@ define Package/netmonitor/install
 	$(INSTALL_BIN) ./files/netmonitor-collector $(1)/usr/sbin/netmonitor-collector
 	$(INSTALL_BIN) ./files/netmonitor-dns-sniff $(1)/usr/sbin/netmonitor-dns-sniff
 	$(INSTALL_BIN) ./files/netmonitor-asn-update $(1)/usr/sbin/netmonitor-asn-update
+	$(INSTALL_BIN) ./files/netmonitor-service-update $(1)/usr/sbin/netmonitor-service-update
 	$(INSTALL_BIN) ./files/netmonitor-rpcd-watch $(1)/usr/sbin/netmonitor-rpcd-watch
 	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
 	$(INSTALL_BIN) ./files/rpcd-netmonitor $(1)/usr/libexec/rpcd/netmonitor

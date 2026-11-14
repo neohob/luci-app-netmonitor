@@ -208,6 +208,8 @@ return view.extend({
 				return {
 					key: String(r.display == null ? r.target : r.display),
 					display: r.display == null ? r.target : r.display,
+					source: r.source,
+					asn_org: r.asn_org,
 					children: r.children || [],
 					session_count: num(r.session_count),
 					bytes_up: num(r.bytes_up),
@@ -229,6 +231,8 @@ return view.extend({
 				g = {
 					key: key,
 					display: r.display == null ? r.target : r.display,
+					source: r.source,
+					asn_org: r.asn_org,
 					children: [],
 					bytes_up: 0,
 					bytes_down: 0,
@@ -252,6 +256,8 @@ return view.extend({
 			if (!r.unresolved) g.unresolved = false;
 			if (r.active) g.active = true;
 			if (r.split) g.split = true;
+			if (!g.source && r.source) g.source = r.source;
+			if (!g.asn_org && r.asn_org) g.asn_org = r.asn_org;
 		});
 		return keys.map(function(k) { return map[k]; });
 	},
@@ -323,7 +329,15 @@ return view.extend({
 		var out = [];
 		var n = num(r.session_count);
 		if (n > 1) out.push(E('span', { 'class': 'nm-tag', 'title': _('合并的会话数') }, n + ' ' + _('次')));
-		if (r.unresolved) out.push(E('span', { 'class': 'nm-tag' }, _('未解析')));
+		if (r.source === 'service')
+			out.push(E('span', { 'class': 'nm-tag nm-tag-service', 'title': _('来自云/CDN 网段库') }, _('云')));
+		else if (r.source === 'asn')
+			out.push(E('span', {
+				'class': 'nm-tag nm-tag-asn',
+				'title': _('来自 GeoLite2 ASN（主名仍为 IP）')
+			}, r.asn_org ? String(r.asn_org).slice(0, 24) : 'ASN'));
+		else if (r.unresolved)
+			out.push(E('span', { 'class': 'nm-tag' }, _('未解析')));
 		if (r.active) out.push(E('span', { 'class': 'nm-tag nm-tag-live' }, _('进行中')));
 		if (r.split) out.push(E('span', { 'class': 'nm-tag', 'title': _('该会话跨越午夜，已按自然日拆分') }, _('跨日')));
 		return out;

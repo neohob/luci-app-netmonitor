@@ -23,19 +23,27 @@ M.DEFAULTS = {
 	asn_day_time = 4,
 	asn_path = '/overlay/netmonitor/GeoLite2-ASN.mmdb',
 	asn_url = 'https://cdn.jsdelivr.net/npm/geolite2-asn/GeoLite2-ASN.mmdb.gz',
+	service_enable = 1,
+	service_auto_update = 1,
+	service_week_time = '*',
+	service_day_time = 5,
+	service_path = '/overlay/netmonitor/services.map',
 }
 
 local NUMERIC = {
 	enabled = true, interval = true, idle_gap = true, retention_value = true,
 	reserve_min_mb = true, reserve_pct = true, manage_dnsmasq = true, enable_acct = true,
 	sni_enable = true, asn_enable = true, asn_auto_update = true, asn_day_time = true,
+	service_enable = true, service_auto_update = true, service_day_time = true,
 }
 
 -- Settable from the UI; everything else is UCI-only.
 M.SETTABLE = { db_path = true, interval = true, idle_gap = true,
 	retention_value = true, retention_unit = true, enabled = true, sni_enable = true,
 	asn_enable = true, asn_auto_update = true, asn_week_time = true, asn_day_time = true,
-	asn_path = true, asn_url = true }
+	asn_path = true, asn_url = true,
+	service_enable = true, service_auto_update = true, service_week_time = true,
+	service_day_time = true, service_path = true }
 
 local function shell_quote(s)
 	return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
@@ -93,6 +101,15 @@ function M.validate(cur, patch)
 		if not w or w < 0 or w > 6 or w % 1 ~= 0 then return nil, 'bad_asn_week_time' end
 	end
 	cfg.asn_week_time = week
+	if cfg.service_path ~= '' and not cfg.service_path:match('^/') then return nil, 'service_path_not_absolute' end
+	local sday = tonumber(cfg.service_day_time)
+	if not sday or sday < 0 or sday > 23 or sday % 1 ~= 0 then return nil, 'bad_service_day_time' end
+	local sweek = tostring(cfg.service_week_time or '*')
+	if sweek ~= '*' then
+		local w = tonumber(sweek)
+		if not w or w < 0 or w > 6 or w % 1 ~= 0 then return nil, 'bad_service_week_time' end
+	end
+	cfg.service_week_time = sweek
 	return cfg
 end
 

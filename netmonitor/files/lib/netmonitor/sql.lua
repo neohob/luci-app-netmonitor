@@ -30,14 +30,34 @@ end
 
 function M.upsert_ip_name(ip, name, source, updated_at)
 	local q = db.quote
+	-- Priority: dns > sni/http_host > service > asn > other. Never demote.
 	return string.format(
 		'INSERT INTO ip_names(ip, name, source, updated_at) VALUES (%s, %s, %s, %s) '
 		.. 'ON CONFLICT(ip) DO UPDATE SET '
-		.. 'name = CASE WHEN excluded.source = %s OR ip_names.source != %s THEN excluded.name ELSE ip_names.name END, '
-		.. 'source = CASE WHEN excluded.source = %s OR ip_names.source != %s THEN excluded.source ELSE ip_names.source END, '
+		.. 'name = CASE '
+		.. 'WHEN excluded.source = %s THEN excluded.name '
+		.. 'WHEN excluded.source IN (%s,%s) AND ip_names.source != %s THEN excluded.name '
+		.. 'WHEN excluded.source = %s AND ip_names.source NOT IN (%s,%s,%s) THEN excluded.name '
+		.. 'WHEN excluded.source = %s AND ip_names.source NOT IN (%s,%s,%s,%s) THEN excluded.name '
+		.. 'WHEN ip_names.source = excluded.source THEN excluded.name '
+		.. 'ELSE ip_names.name END, '
+		.. 'source = CASE '
+		.. 'WHEN excluded.source = %s THEN excluded.source '
+		.. 'WHEN excluded.source IN (%s,%s) AND ip_names.source != %s THEN excluded.source '
+		.. 'WHEN excluded.source = %s AND ip_names.source NOT IN (%s,%s,%s) THEN excluded.source '
+		.. 'WHEN excluded.source = %s AND ip_names.source NOT IN (%s,%s,%s,%s) THEN excluded.source '
+		.. 'WHEN ip_names.source = excluded.source THEN excluded.source '
+		.. 'ELSE ip_names.source END, '
 		.. 'updated_at = excluded.updated_at;',
 		q(ip), q(name), q(source), q(updated_at),
-		q('dns'), q('dns'), q('dns'), q('dns'))
+		q('dns'),
+		q('sni'), q('http_host'), q('dns'),
+		q('service'), q('dns'), q('sni'), q('http_host'),
+		q('asn'), q('dns'), q('sni'), q('http_host'), q('service'),
+		q('dns'),
+		q('sni'), q('http_host'), q('dns'),
+		q('service'), q('dns'), q('sni'), q('http_host'),
+		q('asn'), q('dns'), q('sni'), q('http_host'), q('service'))
 end
 
 function M.insert_sample(device, target, ts, up, down)

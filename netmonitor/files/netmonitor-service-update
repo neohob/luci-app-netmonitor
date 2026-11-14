@@ -1,0 +1,99 @@
+#!/bin/sh
+# Build / refresh services.map (cloud/CDN CIDR → service label) for netmonitor.
+# Usage: netmonitor-service-update [--path PATH]
+set -e
+
+PATH_BIN=/usr/sbin:/usr/bin:/bin
+export PATH="$PATH_BIN:$PATH"
+
+SVC_PATH="$(uci -q get netmonitor.main.service_path 2>/dev/null || true)"
+[ -n "$SVC_PATH" ] || SVC_PATH="/overlay/netmonitor/services.map"
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--path) SVC_PATH="$2"; shift 2 ;;
+		*) echo "unknown arg: $1" >&2; exit 2 ;;
+	esac
+done
+
+STATUS_FILE="/overlay/netmonitor/services-update.status"
+DIR="$(dirname "$SVC_PATH")"
+mkdir -p "$DIR"
+
+write_status() {
+	local state="$1" err="$2" bytes="$3" ranges="$4"
+	local ts
+	ts="$(date +%s)"
+	printf '{"state":"%s","ts":%s,"error":"%s","bytes":%s,"ranges":%s,"path":"%s"}\n' \
+		"$state" "$ts" "$(echo "$err" | sed 's/"/\\"/g')" "${bytes:-0}" "${ranges:-0}" "$SVC_PATH" \
+		> "${STATUS_FILE}.tmp" && mv -f "${STATUS_FILE}.tmp" "$STATUS_FILE"
+}
+
+write_status "running" "" 0 0
+
+TMPDIR="$(mktemp -d /tmp/netmonitor-svc.XXXXXX)"
+trap 'rm -rf "$TMPDIR"' EXIT
+LIST="$TMPDIR/list.tsv"
+
+fetch() {
+	local label="$1" url="$2" dest="$3"
+	if curl -fsSL --connect-timeout 15 -m 120 -o "$dest" "$url"; then
+		printf '%s\t%s\n' "$label" "$dest" >> "$LIST"
+		return 0
+	fi
+	echo "warn: skip $label ($url)" >&2
+	return 1
+}
+
+# Domestic clouds (metowolf/iplist) — first wins on overlap.
+METO="https://metowolf.github.io/iplist/data/isp"
+fetch "字节跳动" "$METO/bytedance.txt" "$TMPDIR/bytedance.txt" || true
+fetch "阿里云" "$METO/aliyun.txt" "$TMPDIR/aliyun.txt" || true
+fetch "腾讯云" "$METO/tencent.txt" "$TMPDIR/tencent.txt" || true
+fetch "百度云" "$METO/baidu.txt" "$TMPDIR/baidu.txt" || true
+fetch "华为云" "$METO/huawei.txt" "$TMPDIR/huawei.txt" || true
+fetch "金山云" "$METO/ksyun.txt" "$TMPDIR/ksyun.txt" || true
+fetch "UCloud" "$METO/ucloud.txt" "$TMPDIR/ucloud.txt" || true
+fetch "Google Cloud" "$METO/googlecloud.txt" "$TMPDIR/googlecloud.txt" || true
+
+# Overseas CDN / cloud (disposable/cloud-ip-ranges).
+DISP="https://raw.githubusercontent.com/disposable/cloud-ip-ranges/master/txt"
+fetch "Cloudflare" "$DISP/cloudflare.txt" "$TMPDIR/cloudflare.txt" || true
+fetch "Fastly" "$DISP/fastly.txt" "$TMPDIR/fastly.txt" || true
+fetch "Akamai" "$DISP/akamai.txt" "$TMPDIR/akamai.txt" || true
+fetch "AWS" "$DISP/aws.txt" "$TMPDIR/aws.txt" || true
+fetch "Google Cloud" "$DISP/google-cloud.txt" "$TMPDIR/google-cloud-disp.txt" || true
+fetch "GitHub" "$DISP/github.txt" "$TMPDIR/github.txt" || true
+fetch "DigitalOcean" "$DISP/digitalocean.txt" "$TMPDIR/digitalocean.txt" || true
+fetch "Oracle Cloud" "$DISP/oracle-cloud.txt" "$TMPDIR/oracle-cloud.txt" || true
+fetch "OpenAI" "$DISP/openai.txt" "$TMPDIR/openai.txt" || true
+fetch "Telegram" "$DISP/telegram.txt" "$TMPDIR/telegram.txt" || true
+fetch "Bunny CDN" "$DISP/bunny-cdn.txt" "$TMPDIR/bunny-cdn.txt" || true
+fetch "Gcore CDN" "$DISP/gcore-cdn.txt" "$TMPDIR/gcore-cdn.txt" || true
+fetch "Imperva" "$DISP/imperva.txt" "$TMPDIR/imperva.txt" || true
+fetch "Zoom" "$DISP/zoom.txt" "$TMPDIR/zoom.txt" || true
+fetch "CacheFly" "$DISP/cachefly.txt" "$TMPDIR/cachefly.txt" || true
+
+# Official Cloudflare IPv6 (tiny); IPv4 already covered above.
+fetch "Cloudflare" "https://www.cloudflare.com/ips-v6" "$TMPDIR/cloudflare-v6.txt" || true
+
+if [ ! -s "$LIST" ]; then
+	write_status "error" "all_downloads_failed" 0 0
+	echo "all downloads failed" >&2
+	exit 1
+fi
+
+export NM_SERVICE_BUILD_LIST="$LIST"
+export NM_SERVICE_BUILD_OUT="$TMPDIR/services.map"
+RANGES="$(lua -e 'package.path="/usr/lib/lua/?.lua;"..package.path; require("netmonitor.service").cli_build()')"
+BYTES="$(wc -c < "$TMPDIR/services.map" | tr -d ' ')"
+
+if [ -z "$BYTES" ] || [ "$BYTES" -lt 64 ] || [ -z "$RANGES" ] || [ "$RANGES" -lt 1 ]; then
+	write_status "error" "build_failed" "${BYTES:-0}" "${RANGES:-0}"
+	echo "build failed (bytes=$BYTES ranges=$RANGES)" >&2
+	exit 1
+fi
+
+cp -f "$TMPDIR/services.map" "$SVC_PATH"
+write_status "ok" "" "$BYTES" "$RANGES"
+echo "ok: $BYTES bytes, $RANGES ranges -> $SVC_PATH"

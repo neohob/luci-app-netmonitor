@@ -71,6 +71,7 @@ cp "$ROOT/netmonitor/files/netmonitor.uci-defaults" "$NM_DATA/etc/uci-defaults/9
 cp "$ROOT/netmonitor/files/netmonitor-collector" "$NM_DATA/usr/sbin/netmonitor-collector"
 cp "$ROOT/netmonitor/files/netmonitor-dns-sniff" "$NM_DATA/usr/sbin/netmonitor-dns-sniff"
 cp "$ROOT/netmonitor/files/netmonitor-asn-update" "$NM_DATA/usr/sbin/netmonitor-asn-update"
+cp "$ROOT/netmonitor/files/netmonitor-service-update" "$NM_DATA/usr/sbin/netmonitor-service-update"
 cp "$ROOT/netmonitor/files/netmonitor-rpcd-watch" "$NM_DATA/usr/sbin/netmonitor-rpcd-watch"
 cp "$ROOT/netmonitor/files/rpcd-netmonitor" "$NM_DATA/usr/libexec/rpcd/netmonitor"
 cp "$ROOT/netmonitor/files/lib/netmonitor/"*.lua "$NM_DATA/usr/lib/lua/netmonitor/"
@@ -79,6 +80,7 @@ chmod 755 "$NM_DATA/etc/init.d/netmonitor" \
   "$NM_DATA/usr/sbin/netmonitor-collector" \
   "$NM_DATA/usr/sbin/netmonitor-dns-sniff" \
   "$NM_DATA/usr/sbin/netmonitor-asn-update" \
+  "$NM_DATA/usr/sbin/netmonitor-service-update" \
   "$NM_DATA/usr/sbin/netmonitor-rpcd-watch" \
   "$NM_DATA/usr/libexec/rpcd/netmonitor"
 

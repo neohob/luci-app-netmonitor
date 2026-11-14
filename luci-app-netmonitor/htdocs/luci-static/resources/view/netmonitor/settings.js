@@ -39,7 +39,12 @@ return view.extend({
 			asn_week_time: this.inAsnWeek ? this.inAsnWeek.value : '*',
 			asn_day_time: this.inAsnHour ? parseInt(this.inAsnHour.value, 10) : 4,
 			asn_path: this.inAsnPath ? this.inAsnPath.value.trim() : '',
-			asn_url: this.inAsnUrl ? this.inAsnUrl.value.trim() : ''
+			asn_url: this.inAsnUrl ? this.inAsnUrl.value.trim() : '',
+			service_enable: this.inSvc && this.inSvc.checked ? 1 : 0,
+			service_auto_update: this.inSvcAuto && this.inSvcAuto.checked ? 1 : 0,
+			service_week_time: this.inSvcWeek ? this.inSvcWeek.value : '*',
+			service_day_time: this.inSvcHour ? parseInt(this.inSvcHour.value, 10) : 5,
+			service_path: this.inSvcPath ? this.inSvcPath.value.trim() : ''
 		};
 	},
 
@@ -110,7 +115,9 @@ return view.extend({
 			var enable = self.wizard ? 1 : (self.cfg.enabled == null ? 1 : self.cfg.enabled);
 			return nm.callSetConfig(v.db_path, v.interval, v.idle_gap, v.retention_value, v.retention_unit, enable,
 					v.sni_enable, v.asn_enable, v.asn_auto_update, v.asn_week_time, v.asn_day_time,
-					v.asn_path, v.asn_url, confirm ? true : null)
+					v.asn_path, v.asn_url,
+					v.service_enable, v.service_auto_update, v.service_week_time, v.service_day_time,
+					v.service_path, confirm ? true : null)
 				.then(function(res) {
 					if (res && res.need_confirm) {
 						ui.showModal(_('缩短保留期限'), [
@@ -225,6 +232,7 @@ return view.extend({
 					]), tip);
 				})()
 			]),
+			this.renderServiceSection(cfg, st),
 			this.renderAsnSection(cfg, st),
 			controls
 		]);
@@ -291,7 +299,9 @@ return view.extend({
 		return nm.callSetConfig(v.db_path, v.interval, v.idle_gap, v.retention_value, v.retention_unit,
 			this.cfg.enabled == null ? 1 : this.cfg.enabled,
 			v.sni_enable, v.asn_enable, v.asn_auto_update, v.asn_week_time, v.asn_day_time,
-			v.asn_path, v.asn_url, null).then(function(res) {
+			v.asn_path, v.asn_url,
+			v.service_enable, v.service_auto_update, v.service_week_time, v.service_day_time,
+			v.service_path, null).then(function(res) {
 			if (!res || !res.ok) {
 				ui.addNotification(null, E('p', nm.errorText(res && res.error)), 'danger');
 				return;
@@ -308,6 +318,121 @@ return view.extend({
 				return self.pollAsnUpdate(0);
 			});
 		});
+	},
+
+	svcStatusText: function(st) {
+		var a = (st && st.service) || {};
+		var parts = [];
+		if (a.size)
+			parts.push(_('库文件 %s').format(this.formatBytes(a.size)) +
+				(a.ranges ? _(' · %d 段').format(a.ranges) : '') +
+				(a.mtime ? _(' · 更新于 %s').format(new Date(a.mtime * 1000).toLocaleString()) : ''));
+		else
+			parts.push(_('尚未下载服务网段库'));
+		var u = a.update || {};
+		if (u.state === 'running')
+			parts.push(_('正在更新…'));
+		else if (u.state === 'ok' && u.ts)
+			parts.push(_('上次更新成功 · %s').format(new Date(u.ts * 1000).toLocaleString()));
+		else if (u.state === 'error')
+			parts.push(_('上次更新失败：%s').format(u.error || '?'));
+		if (a.hits != null)
+			parts.push(_('本进程命中 %d').format(a.hits || 0));
+		return parts.join(' · ');
+	},
+
+	pollSvcUpdate: function(tries) {
+		var self = this;
+		tries = tries || 0;
+		return nm.callStatus().then(function(st) {
+			self.st = st || self.st;
+			if (self.svcStatusBox)
+				dom.content(self.svcStatusBox, self.svcStatusText(st));
+			var u = st && st.service && st.service.update;
+			if (u && u.state === 'running' && tries < 120) {
+				return new Promise(function(resolve) {
+					window.setTimeout(function() {
+						resolve(self.pollSvcUpdate(tries + 1));
+					}, 2000);
+				});
+			}
+			if (u && u.state === 'ok')
+				ui.addNotification(null, E('p', _('服务网段库更新成功')), 'info');
+			else if (u && u.state === 'error')
+				ui.addNotification(null, E('p', _('服务网段更新失败：') + (u.error || '')), 'danger');
+			return st;
+		});
+	},
+
+	updateSvcNow: function() {
+		var self = this, v = this.values();
+		return nm.callSetConfig(v.db_path, v.interval, v.idle_gap, v.retention_value, v.retention_unit,
+			this.cfg.enabled == null ? 1 : this.cfg.enabled,
+			v.sni_enable, v.asn_enable, v.asn_auto_update, v.asn_week_time, v.asn_day_time,
+			v.asn_path, v.asn_url,
+			v.service_enable, v.service_auto_update, v.service_week_time, v.service_day_time,
+			v.service_path, null).then(function(res) {
+			if (!res || !res.ok) {
+				ui.addNotification(null, E('p', nm.errorText(res && res.error)), 'danger');
+				return;
+			}
+			return nm.callUpdateService().then(function(r) {
+				if (!r || !r.ok) {
+					ui.addNotification(null, E('p', nm.errorText(r && r.error)), 'danger');
+					return;
+				}
+				if (r.busy)
+					ui.addNotification(null, E('p', _('服务网段更新已在进行中')), 'warning');
+				else
+					ui.addNotification(null, E('p', _('已开始下载服务网段…')), 'info');
+				return self.pollSvcUpdate(0);
+			});
+		});
+	},
+
+	renderServiceSection: function(cfg, st) {
+		this.inSvc = E('input', { 'type': 'checkbox' });
+		this.inSvc.checked = cfg.service_enable == null ? true : Number(cfg.service_enable) !== 0;
+		this.inSvcAuto = E('input', { 'type': 'checkbox' });
+		this.inSvcAuto.checked = cfg.service_auto_update == null ? true : Number(cfg.service_auto_update) !== 0;
+		this.inSvcPath = E('input', { 'class': 'cbi-input-text', 'type': 'text',
+			'value': cfg.service_path || '/overlay/netmonitor/services.map',
+			'style': 'width:100%;max-width:36em' });
+		var week = String(cfg.service_week_time == null ? '*' : cfg.service_week_time);
+		var weekOpts = [
+			['*', _('每天')], ['0', _('周日')], ['1', _('周一')], ['2', _('周二')],
+			['3', _('周三')], ['4', _('周四')], ['5', _('周五')], ['6', _('周六')]
+		];
+		this.inSvcWeek = E('select', { 'class': 'cbi-input-select' }, weekOpts.map(function(o) {
+			return E('option', { 'value': o[0], 'selected': o[0] === week ? '' : null }, o[1]);
+		}));
+		var hour = Number(cfg.service_day_time != null ? cfg.service_day_time : 5);
+		this.inSvcHour = E('select', { 'class': 'cbi-input-select' }, Array.apply(null, Array(24)).map(function(_unused, i) {
+			return E('option', { 'value': String(i), 'selected': i === hour ? '' : null },
+				_('%d 点').format(i));
+		}));
+		this.svcStatusBox = E('div', { 'class': 'cbi-value-description' }, this.svcStatusText(st));
+
+		return E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, _('服务网段库')),
+			E('p', { 'class': 'cbi-value-description' },
+				_('在 DNS/SNI 之后，用云厂商与 CDN 网段把目标标成「字节跳动」「Cloudflare」「AWS」等。默认约 340 KiB（metowolf + disposable）。家宽 P2P 对端无法标成 App 名。')),
+			this.field(_('启用服务网段回填'), E('label', {}, [ this.inSvc, ' ', _('启用') ])),
+			this.field(_('数据库路径'), this.inSvcPath, _('默认 /overlay/netmonitor/services.map')),
+			this.field(_('自动更新'), E('div', {}, [
+				E('label', {}, [ this.inSvcAuto, ' ', _('启用定时更新') ]),
+				E('div', { 'style': 'margin-top:.5em' }, [
+					this.inSvcWeek, ' ', this.inSvcHour
+				])
+			]), _('写入 crontab（# netmonitor-service-update）；关闭则移除该行。')),
+			this.field(_('手动更新'), E('div', {}, [
+				E('button', {
+					'class': 'cbi-button cbi-button-apply',
+					'click': ui.createHandlerFn(this, 'updateSvcNow')
+				}, _('立即更新服务网段')),
+				this.svcStatusBox
+			]), _('需能访问 GitHub / metowolf CDN；下载合并约半分钟。'))
+		]);
 	},
 
 	renderAsnSection: function(cfg, st) {
@@ -330,7 +455,6 @@ return view.extend({
 			urls.map(function(u) {
 				return E('option', { 'value': u, 'selected': u === curUrl ? '' : null }, u.replace(/^https:\/\//, ''));
 			}).concat([
-				/* allow current custom URL if not in presets */
 				urls.indexOf(curUrl) < 0 ? E('option', { 'value': curUrl, 'selected': '' }, curUrl) : ''
 			]));
 		var week = String(cfg.asn_week_time == null ? '*' : cfg.asn_week_time);
@@ -351,7 +475,7 @@ return view.extend({
 		return E('div', { 'class': 'cbi-section' }, [
 			E('h3', {}, _('ASN 归属库')),
 			E('p', { 'class': 'cbi-value-description' },
-				_('DNS / SNI 仍无法命名时，用 GeoLite2-ASN 显示组织名（如 Google、阿里云）。与 PassWall / MosDNS 的 geoip 分流库无关，本应用独立下载与更新。')),
+				_('服务网段仍无法命名时，用 GeoLite2-ASN 在标签中显示运营商/组织（如 Chinanet）；主名保持为 IP，避免合并成一条。')),
 			this.field(_('启用 ASN 回填'), E('label', {}, [ this.inAsn, ' ', _('启用') ]),
 				_('需安装：opkg install libmaxminddb lua-maxminddb')),
 			this.field(_('数据库路径'), this.inAsnPath, _('默认放在 /overlay/netmonitor/，约 8–12 MiB。')),

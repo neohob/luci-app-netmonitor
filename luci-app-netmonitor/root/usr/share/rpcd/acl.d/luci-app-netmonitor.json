@@ -9,7 +9,7 @@
 		},
 		"write": {
 			"ubus": {
-				"netmonitor": [ "set_config", "collector", "prepare_path", "update_asn" ]
+				"netmonitor": [ "set_config", "collector", "prepare_path", "update_asn", "update_service" ]
 			},
 			"uci": [ "netmonitor" ]
 		}

@@ -11,13 +11,16 @@ var callGetConfig = rpc.declare({ object: 'netmonitor', method: 'get_config' });
 var callSetConfig = rpc.declare({ object: 'netmonitor', method: 'set_config',
 	params: [ 'db_path', 'interval', 'idle_gap', 'retention_value', 'retention_unit', 'enabled',
 		'sni_enable', 'asn_enable', 'asn_auto_update', 'asn_week_time', 'asn_day_time',
-		'asn_path', 'asn_url', 'confirm' ] });
+		'asn_path', 'asn_url',
+		'service_enable', 'service_auto_update', 'service_week_time', 'service_day_time',
+		'service_path', 'confirm' ] });
 var callEstimate = rpc.declare({ object: 'netmonitor', method: 'estimate',
 	params: [ 'retention_value', 'retention_unit', 'db_path' ] });
 var callCheckPath = rpc.declare({ object: 'netmonitor', method: 'check_path', params: [ 'path' ] });
 var callPreparePath = rpc.declare({ object: 'netmonitor', method: 'prepare_path', params: [ 'path' ] });
 var callCollector = rpc.declare({ object: 'netmonitor', method: 'collector', params: [ 'action' ] });
 var callUpdateAsn = rpc.declare({ object: 'netmonitor', method: 'update_asn' });
+var callUpdateService = rpc.declare({ object: 'netmonitor', method: 'update_service' });
 
 var UNIT_LABELS = { hour: '小时', day: '天', week: '周', month: '个月', year: '年' };
 
@@ -47,7 +50,7 @@ function errorText(code) {
 }
 
 function cssLink() {
-	var href = L.resource('netmonitor/netmonitor.css') + '?v=0.4.3-cal';
+	var href = L.resource('netmonitor/netmonitor.css') + '?v=0.5.0-svc';
 	var existing = document.querySelector('link[data-netmonitor]');
 	if (existing) {
 		if (existing.getAttribute('href') !== href) existing.setAttribute('href', href);
@@ -136,6 +139,12 @@ function statusBanners(st) {
 			]));
 		else if (w === 'asn_update_failed')
 			out.push(banner('warn', _('ASN 数据库上次更新失败，可在设置中手动重试。')));
+		else if (w === 'service_unavailable')
+			out.push(banner('warn', _('服务网段库尚未下载：可在设置中更新，用于把云/CDN IP 标成厂商名。'), [
+				E('a', { 'class': 'cbi-button', 'href': L.url('admin/control/netmonitor/settings') }, [ _('打开设置') ])
+			]));
+		else if (w === 'service_update_failed')
+			out.push(banner('warn', _('服务网段库上次更新失败，可在设置中手动重试。')));
 		else if (w === 'retention_failed')
 			out.push(banner('warn', _('历史清理（保留期限）失败，采集写入仍在继续。详情：') + errorText(st.retention_detail || st.error || 'db_error')));
 	});
@@ -155,6 +164,7 @@ return baseclass.extend({
 	callPreparePath: callPreparePath,
 	callCollector: callCollector,
 	callUpdateAsn: callUpdateAsn,
+	callUpdateService: callUpdateService,
 	errorText: errorText,
 	cssLink: cssLink,
 	banner: banner,

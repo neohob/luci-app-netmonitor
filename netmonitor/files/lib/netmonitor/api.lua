@@ -8,6 +8,7 @@ local timeutil = require 'netmonitor.timeutil'
 local topology = require 'netmonitor.topology'
 local detail = require 'netmonitor.detail'
 local asn = require 'netmonitor.asn'
+local service = require 'netmonitor.service'
 local json = require 'netmonitor.json'
 
 local M = {}
@@ -73,13 +74,33 @@ local function resolve(env, args)
 end
 
 local function pair_rows(path, since)
-	-- Prefer targets.display when resolved; else backfill from ip_names (DNS/SNI sniff),
-	-- so older IP-keyed rows light up after names are learned.
+	-- Prefer domain/service displays; never use ASN org as the display name.
 	return q(path, string.format([[
 SELECT s.device, s.target, s.up, s.down, d.ip, d.hostname,
-  COALESCE(CASE WHEN t.unresolved = 0 THEN t.display END, n.name, n2.name, t.display, s.target) AS display,
-  CASE WHEN t.unresolved = 0 OR n.name IS NOT NULL OR n2.name IS NOT NULL THEN 0 ELSE 1 END AS unresolved,
-  COALESCE(CASE WHEN t.unresolved = 0 THEN t.source END, n.source, n2.source, t.source, 'ip') AS source
+  COALESCE(
+    CASE WHEN t.source IN ('dns','sni','http_host','service') THEN t.display END,
+    CASE WHEN n.source IN ('dns','sni','http_host','service') THEN n.name END,
+    CASE WHEN n2.source IN ('dns','sni','http_host','service') THEN n2.name END,
+    CASE WHEN t.source = 'asn' THEN COALESCE(t.ip, s.target) END,
+    t.display, s.target
+  ) AS display,
+  CASE
+    WHEN t.source IN ('dns','sni','http_host','service','asn') THEN 0
+    WHEN n.source IN ('dns','sni','http_host','service','asn') THEN 0
+    WHEN n2.source IN ('dns','sni','http_host','service','asn') THEN 0
+    WHEN t.unresolved = 0 THEN 0
+    ELSE 1
+  END AS unresolved,
+  COALESCE(
+    CASE WHEN t.source IN ('dns','sni','http_host','service','asn') THEN t.source END,
+    CASE WHEN n.source IN ('dns','sni','http_host','service','asn') THEN n.source END,
+    CASE WHEN n2.source IN ('dns','sni','http_host','service','asn') THEN n2.source END,
+    t.source, 'ip'
+  ) AS source,
+  COALESCE(
+    CASE WHEN n.source = 'asn' THEN n.name END,
+    CASE WHEN n2.source = 'asn' THEN n2.name END
+  ) AS asn_org
 FROM (SELECT device, target, SUM(bytes_up) AS up, SUM(bytes_down) AS down
       FROM traffic_samples WHERE ts >= %s GROUP BY device, target) s
 LEFT JOIN devices d ON d.mac = s.device
@@ -161,6 +182,17 @@ function M.status(args, env)
 		for _, w in ipairs(out.warnings) do if w == 'asn_update_failed' then dup = true end end
 		if not dup then out.warnings[#out.warnings + 1] = 'asn_update_failed' end
 	end
+	out.service = st.service or service.status(nil, cfg)
+	if out.service.enabled and not out.service.available then
+		local dup = false
+		for _, w in ipairs(out.warnings) do if w == 'service_unavailable' then dup = true end end
+		if not dup then out.warnings[#out.warnings + 1] = 'service_unavailable' end
+	end
+	if out.service.update and out.service.update.state == 'error' then
+		local dup = false
+		for _, w in ipairs(out.warnings) do if w == 'service_update_failed' then dup = true end end
+		if not dup then out.warnings[#out.warnings + 1] = 'service_update_failed' end
+	end
 	return out
 end
 
@@ -176,7 +208,8 @@ function M.topology(args, env)
 				up = tonumber(r.up) or 0, down = tonumber(r.down) or 0 }
 			info.devices[r.device] = { ip = r.ip, hostname = r.hostname }
 			info.targets[r.target] = { display = r.display, unresolved = tonumber(r.unresolved),
-				source = r.source or ((tonumber(r.unresolved) == 1) and 'ip' or 'dns') }
+				source = r.source or ((tonumber(r.unresolved) == 1) and 'ip' or 'dns'),
+				asn_org = r.asn_org }
 		end
 		local c = q(path, 'SELECT COUNT(*) AS n FROM traffic_samples WHERE ts >= ' .. db.quote(since) .. ';')[1] or {}
 		stats = storage_stats(path)
@@ -262,8 +295,27 @@ function M.device_detail(args, env)
 
 	local sessions = q(path, string.format([[
 SELECT s.device, s.target, s.started_at, s.last_seen_at, s.bytes_up, s.bytes_down, s.closed,
-       t.display, t.unresolved
-FROM sessions s LEFT JOIN targets t ON t.key = s.target
+  COALESCE(
+    CASE WHEN t.source IN ('dns','sni','http_host','service') THEN t.display END,
+    CASE WHEN n.source IN ('dns','sni','http_host','service') THEN n.name END,
+    CASE WHEN t.source = 'asn' THEN COALESCE(t.ip, s.target) END,
+    t.display, s.target
+  ) AS display,
+  CASE
+    WHEN t.source IN ('dns','sni','http_host','service','asn') THEN 0
+    WHEN n.source IN ('dns','sni','http_host','service','asn') THEN 0
+    WHEN t.unresolved = 0 THEN 0
+    ELSE 1
+  END AS unresolved,
+  COALESCE(
+    CASE WHEN t.source IN ('dns','sni','http_host','service','asn') THEN t.source END,
+    CASE WHEN n.source IN ('dns','sni','http_host','service','asn') THEN n.source END,
+    t.source, 'ip'
+  ) AS source,
+  CASE WHEN n.source = 'asn' THEN n.name END AS asn_org
+FROM sessions s
+LEFT JOIN targets t ON t.key = s.target
+LEFT JOIN ip_names n ON n.ip = COALESCE(t.ip, CASE WHEN s.target GLOB '*.*.*.*' THEN s.target END)
 WHERE s.device = %s AND s.started_at < %s AND s.last_seen_at >= %s;]], qm, db.quote(de), db.quote(ds)))
 
 	-- Samples are only needed to apportion bytes for sessions that cross
@@ -378,8 +430,11 @@ end
 function M.set_config(args, env)
 	args = args or {}
 	local confirm = args.confirm
+	-- Only accept known UCI keys. LuCI/rpcd also injects ubus_rpc_session etc.
 	local patch = {}
-	for k, v in pairs(args) do if k ~= 'confirm' then patch[k] = v end end
+	for k, v in pairs(args) do
+		if config.SETTABLE[k] then patch[k] = v end
+	end
 	local cfg, err = config.validate(env.cfg, patch)
 	if not cfg then return { ok = false, error = err } end
 
@@ -414,6 +469,7 @@ function M.set_config(args, env)
 	-- Tests set cron_runner=false to skip; production uses os.execute.
 	if env.cron_runner ~= false then
 		pcall(asn.sync_cron, cfg, env.cron_runner or os.execute)
+		pcall(service.sync_cron, cfg, env.cron_runner or os.execute)
 	end
 	-- Honour enabled=0 / stop intent (F8).
 	if cfg.db_path == '' then
@@ -428,6 +484,10 @@ end
 
 function M.update_asn(args, env)
 	return asn.start_update(env.cfg, env.runner)
+end
+
+function M.update_service(args, env)
+	return service.start_update(env.cfg, env.runner)
 end
 
 function M.collector(args, env)
@@ -458,8 +518,11 @@ M.METHODS = {
 		asn_enable = 1, asn_auto_update = 1, asn_week_time = '*', asn_day_time = 4,
 		asn_path = '/overlay/netmonitor/GeoLite2-ASN.mmdb',
 		asn_url = 'https://cdn.jsdelivr.net/npm/geolite2-asn/GeoLite2-ASN.mmdb.gz',
+		service_enable = 1, service_auto_update = 1, service_week_time = '*',
+		service_day_time = 5, service_path = '/overlay/netmonitor/services.map',
 		confirm = true },
 	update_asn = json.object(),
+	update_service = json.object(),
 	collector = { action = 'start' },
 }
 

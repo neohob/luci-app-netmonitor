@@ -59,6 +59,8 @@ function M.build(sessions, samples, opts)
 				d.rows[#d.rows + 1] = {
 					target = s.target, display = s.display or s.target,
 					unresolved = tonumber(s.unresolved) == 1,
+					source = s.source,
+					asn_org = s.asn_org,
 					started_at = seg.started_at, last_seen_at = seg.last_seen_at,
 					duration = seg.last_seen_at - seg.started_at,
 					bytes_up = up, bytes_down = down, bytes_total = up + down,
@@ -114,6 +116,8 @@ function M.merge_by_display(rows, opts)
 			g = {
 				target = r.target,
 				display = r.display or r.target,
+				source = r.source,
+				asn_org = r.asn_org,
 				bytes_up = 0, bytes_down = 0, bytes_total = 0, duration = 0,
 				started_at = tonumber(r.started_at) or 0,
 				unresolved = true, active = false, split = false,

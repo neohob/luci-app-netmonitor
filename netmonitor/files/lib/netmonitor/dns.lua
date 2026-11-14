@@ -102,8 +102,9 @@ end
 
 -- Destination identity for a remote IP (domain preferred, else IP).
 -- Optional sni_hit: { name=, source='sni'|'http_host' } from the SNI probe cache.
--- Optional asn_name: org string from GeoLite2-ASN (never overrides DNS/SNI).
-function M.target_for(state, client_ip, ip, now, sni_hit, asn_name)
+-- Optional service_label: cloud/CDN CIDR hit (never overrides DNS/SNI).
+-- Optional asn_name: GeoLite2-ASN org (tag only; display stays IP).
+function M.target_for(state, client_ip, ip, now, sni_hit, service_label, asn_name)
 	local name = M.lookup(state, client_ip, ip, now)
 	if name then
 		return { key = name, kind = 'domain', display = name, ip = ip,
@@ -114,10 +115,14 @@ function M.target_for(state, client_ip, ip, now, sni_hit, asn_name)
 		return { key = sni_hit.name, kind = 'domain', display = sni_hit.name, ip = ip,
 			unresolved = 0, source = src }
 	end
+	if service_label and service_label ~= '' then
+		return { key = ip, kind = 'ip', display = service_label, ip = ip,
+			unresolved = 0, source = 'service' }
+	end
 	if asn_name and asn_name ~= '' then
-		-- Keep IP as session key so different hosts under one ASN stay separate.
-		return { key = ip, kind = 'ip', display = asn_name, ip = ip,
-			unresolved = 0, source = 'asn' }
+		-- Keep IP as session key and display so ASN orgs do not mega-merge.
+		return { key = ip, kind = 'ip', display = ip, ip = ip,
+			unresolved = 0, source = 'asn', asn_org = asn_name }
 	end
 	return { key = ip, kind = 'ip', display = ip, ip = ip, unresolved = 1, source = 'ip' }
 end

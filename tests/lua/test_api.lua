@@ -156,7 +156,7 @@ H.case('W15', 'rpcd ACL: read/write split; check_path read-only (no FS mutate)',
 		H.ok(read[m], 'read has ' .. m)
 		H.ok(not write[m], 'write lacks ' .. m)
 	end
-	for _, m in ipairs({ 'set_config', 'collector', 'prepare_path', 'update_asn' }) do
+	for _, m in ipairs({ 'set_config', 'collector', 'prepare_path', 'update_asn', 'update_service' }) do
 		H.ok(write[m], 'write has ' .. m)
 		H.ok(not read[m], 'read lacks ' .. m)
 	end
@@ -260,4 +260,23 @@ H.case('W20', 'set_config enabled=0 stops collector (F8)', function()
 	H.eq((saved or env.cfg).enabled, 0, 'saved enabled')
 	H.eq(env.cfg.enabled, 0, 'env enabled')
 	H.ok(tostring(ran[#ran]):find('stop'), 'stop invoked: ' .. tostring(ran[#ran]))
+end)
+
+H.case('W24', 'set_config ignores ubus_rpc_session', function()
+	local saved = nil
+	local env = {
+		cfg = H.cfg({ db_path = '/mnt/usb', enabled = 1, interval = 5 }),
+		now = os.time(),
+		saver = function(c) saved = c end,
+		runner = function() return true end,
+		cron_runner = false,
+		fsops = H.fsops(10 * H.GiB, 32 * H.GiB, true),
+	}
+	local r = api.call('set_config', {
+		interval = 7,
+		ubus_rpc_session = 'deadbeef',
+		confirm = true,
+	}, env)
+	H.eq(r.ok, true, 'ok: ' .. tostring(r.error))
+	H.eq((saved or {}).interval, 7, 'interval saved')
 end)

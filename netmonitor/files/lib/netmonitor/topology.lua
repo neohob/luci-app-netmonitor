@@ -97,7 +97,9 @@ function M.build(rows, info, live)
 		local ti = info.targets[t.key] or {}
 		local base = (i <= top)
 			and { kind = 'target', key = t.key, label = ti.display or t.key,
-				unresolved = ti.unresolved == 1, source = ti.source or (ti.unresolved == 1 and 'ip' or 'dns') }
+				unresolved = ti.unresolved == 1,
+				source = ti.source or (ti.unresolved == 1 and 'ip' or 'dns'),
+				asn_org = ti.asn_org }
 			or { kind = 'other_targets', label = '其他去向' }
 		local n = node(nodes.targets, id, base)
 		n.members = n.members + 1

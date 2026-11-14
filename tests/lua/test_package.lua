@@ -37,6 +37,7 @@ H.case('W18', 'luci-app-netmonitor package name + menu entry present', function(
 	local acl = H.read('./luci-app-netmonitor/root/usr/share/rpcd/acl.d/luci-app-netmonitor.json')
 	H.ok(acl:find('prepare_path'), 'prepare_path on write ACL')
 	H.ok(acl:find('update_asn'), 'update_asn on write ACL')
+	H.ok(acl:find('update_service'), 'update_service on write ACL')
 	H.ok(acl:find('check_path'), 'check_path listed')
 	local cfg = H.read('./netmonitor/files/netmonitor.config')
 	H.ok(cfg:find("option db_path ''"), 'db_path empty by default (wizard)')

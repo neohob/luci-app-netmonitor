@@ -62,6 +62,7 @@
 .nm-cell-bytes { font-size: 14px; font-weight: 600; }
 .nm-tag-sni { background: rgba(59,130,246,.18); color: inherit; font-size: 10px; vertical-align: middle; }
 .nm-tag-asn { background: rgba(16,185,129,.18); color: inherit; font-size: 10px; vertical-align: middle; }
+.nm-tag-service { background: rgba(59,130,246,.18); color: inherit; font-size: 10px; vertical-align: middle; }
 .nm-showall { margin-top: 8px; }
 
 @media (max-width: 600px) {

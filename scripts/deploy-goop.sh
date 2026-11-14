@@ -30,6 +30,7 @@ cp "$ROOT/netmonitor/files/netmonitor.uci-defaults" "$STAGE/netmonitor/etc/uci-d
 cp "$ROOT/netmonitor/files/netmonitor-collector" "$STAGE/netmonitor/usr/sbin/netmonitor-collector"
 cp "$ROOT/netmonitor/files/netmonitor-dns-sniff" "$STAGE/netmonitor/usr/sbin/netmonitor-dns-sniff"
 cp "$ROOT/netmonitor/files/netmonitor-asn-update" "$STAGE/netmonitor/usr/sbin/netmonitor-asn-update"
+cp "$ROOT/netmonitor/files/netmonitor-service-update" "$STAGE/netmonitor/usr/sbin/netmonitor-service-update"
 cp "$ROOT/netmonitor/files/netmonitor-rpcd-watch" "$STAGE/netmonitor/usr/sbin/netmonitor-rpcd-watch"
 cp "$ROOT/netmonitor/files/rpcd-netmonitor" "$STAGE/netmonitor/usr/libexec/rpcd/netmonitor"
 cp "$ROOT/netmonitor/files/lib/netmonitor/"*.lua "$STAGE/netmonitor/usr/lib/lua/netmonitor/"
@@ -38,6 +39,7 @@ chmod 755 "$STAGE/netmonitor/etc/init.d/netmonitor" \
   "$STAGE/netmonitor/usr/sbin/netmonitor-collector" \
   "$STAGE/netmonitor/usr/sbin/netmonitor-dns-sniff" \
   "$STAGE/netmonitor/usr/sbin/netmonitor-asn-update" \
+  "$STAGE/netmonitor/usr/sbin/netmonitor-service-update" \
   "$STAGE/netmonitor/usr/sbin/netmonitor-rpcd-watch" \
   "$STAGE/netmonitor/usr/libexec/rpcd/netmonitor"
 
@@ -62,6 +64,7 @@ cp -a netmonitor/etc/uci-defaults/90-netmonitor /etc/uci-defaults/90-netmonitor
 cp -a netmonitor/usr/sbin/netmonitor-collector /usr/sbin/netmonitor-collector
 cp -a netmonitor/usr/sbin/netmonitor-dns-sniff /usr/sbin/netmonitor-dns-sniff
 cp -a netmonitor/usr/sbin/netmonitor-asn-update /usr/sbin/netmonitor-asn-update
+cp -a netmonitor/usr/sbin/netmonitor-service-update /usr/sbin/netmonitor-service-update
 cp -a netmonitor/usr/sbin/netmonitor-rpcd-watch /usr/sbin/netmonitor-rpcd-watch
 mkdir -p /usr/libexec/rpcd /usr/lib/lua/netmonitor
 cp -a netmonitor/usr/libexec/rpcd/netmonitor /usr/libexec/rpcd/netmonitor
@@ -71,14 +74,19 @@ cp -a luci/usr/share/rpcd/acl.d/luci-app-netmonitor.json /usr/share/rpcd/acl.d/
 mkdir -p /www/luci-static/resources/view/netmonitor /www/luci-static/resources/netmonitor
 cp -a luci/www/luci-static/resources/view/netmonitor/* /www/luci-static/resources/view/netmonitor/
 cp -a luci/www/luci-static/resources/netmonitor/* /www/luci-static/resources/netmonitor/
-chmod 755 /etc/init.d/netmonitor /usr/sbin/netmonitor-collector /usr/sbin/netmonitor-dns-sniff /usr/sbin/netmonitor-asn-update /usr/sbin/netmonitor-rpcd-watch /usr/libexec/rpcd/netmonitor /etc/uci-defaults/90-netmonitor
-# Ensure ASN UCI defaults exist on upgrades without wiping db_path.
+chmod 755 /etc/init.d/netmonitor /usr/sbin/netmonitor-collector /usr/sbin/netmonitor-dns-sniff /usr/sbin/netmonitor-asn-update /usr/sbin/netmonitor-service-update /usr/sbin/netmonitor-rpcd-watch /usr/libexec/rpcd/netmonitor /etc/uci-defaults/90-netmonitor
+# Ensure ASN / service UCI defaults exist on upgrades without wiping db_path.
 uci -q get netmonitor.main.asn_enable >/dev/null || uci -q set netmonitor.main.asn_enable=1
 uci -q get netmonitor.main.asn_auto_update >/dev/null || uci -q set netmonitor.main.asn_auto_update=1
 uci -q get netmonitor.main.asn_week_time >/dev/null || uci -q set netmonitor.main.asn_week_time='*'
 uci -q get netmonitor.main.asn_day_time >/dev/null || uci -q set netmonitor.main.asn_day_time=4
 uci -q get netmonitor.main.asn_path >/dev/null || uci -q set netmonitor.main.asn_path='/overlay/netmonitor/GeoLite2-ASN.mmdb'
 uci -q get netmonitor.main.asn_url >/dev/null || uci -q set netmonitor.main.asn_url='https://cdn.jsdelivr.net/npm/geolite2-asn/GeoLite2-ASN.mmdb.gz'
+uci -q get netmonitor.main.service_enable >/dev/null || uci -q set netmonitor.main.service_enable=1
+uci -q get netmonitor.main.service_auto_update >/dev/null || uci -q set netmonitor.main.service_auto_update=1
+uci -q get netmonitor.main.service_week_time >/dev/null || uci -q set netmonitor.main.service_week_time='*'
+uci -q get netmonitor.main.service_day_time >/dev/null || uci -q set netmonitor.main.service_day_time=5
+uci -q get netmonitor.main.service_path >/dev/null || uci -q set netmonitor.main.service_path='/overlay/netmonitor/services.map'
 uci -q commit netmonitor
 opkg list-installed | grep -q '^lua-maxminddb ' || opkg install libmaxminddb lua-maxminddb || true
 if [ ! -f /etc/netmonitor.uci-defaults.done ]; then

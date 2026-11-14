@@ -5,6 +5,7 @@ local neigh = require 'netmonitor.neigh'
 local dns = require 'netmonitor.dns'
 local sni = require 'netmonitor.sni'
 local asn = require 'netmonitor.asn'
+local service = require 'netmonitor.service'
 local session = require 'netmonitor.session'
 local live = require 'netmonitor.live'
 local disk = require 'netmonitor.disk'
@@ -99,9 +100,11 @@ function M.new(cfg, opts)
 		dns = dns.new(),
 		sni = sni.new(),
 		asn = asn.new(),
+		service = service.new(),
 		last_retention = 0,
 		sni_status = nil,
 		asn_status = nil,
+		service_status = nil,
 	}
 	return ctx
 end
@@ -201,22 +204,27 @@ function M.poll(ctx, now)
 		local mac, dev_ip, remote, dir = M.classify(d.entry, snap)
 		if mac then
 			local sni_hit = sni.lookup(ctx.sni, remote, now)
-			local asn_name = nil
+			local service_label, asn_name = nil, nil
 			if not dns.lookup(ctx.dns, dev_ip, remote, now) and not (sni_hit and sni_hit.name) then
-				asn_name = asn.lookup(ctx.asn, remote, cfg)
+				service_label = service.lookup(ctx.service, remote, cfg)
+				if not service_label then
+					asn_name = asn.lookup(ctx.asn, remote, cfg)
+				end
 			end
-			local t = dns.target_for(ctx.dns, dev_ip, remote, now, sni_hit, asn_name)
+			local t = dns.target_for(ctx.dns, dev_ip, remote, now, sni_hit, service_label, asn_name)
 			if tonumber(t.unresolved) == 1 and not unresolved_seen[remote] then
 				unresolved_seen[remote] = true
 				unresolved_ips[#unresolved_ips + 1] = remote
 			end
-			-- Queue DNS/SNI/ASN names for persistence
+			-- Queue DNS/SNI/service/ASN names for persistence
 			if t.source == 'dns' and t.ip and t.display then
 				ip_name_rows[#ip_name_rows + 1] = { ip = t.ip, name = t.display, source = 'dns', ts = now }
 			elseif (t.source == 'sni' or t.source == 'http_host') and t.ip and t.display then
 				ip_name_rows[#ip_name_rows + 1] = { ip = t.ip, name = t.display, source = t.source, ts = now }
-			elseif t.source == 'asn' and t.ip and t.display then
-				ip_name_rows[#ip_name_rows + 1] = { ip = t.ip, name = t.display, source = 'asn', ts = now }
+			elseif t.source == 'service' and t.ip and t.display then
+				ip_name_rows[#ip_name_rows + 1] = { ip = t.ip, name = t.display, source = 'service', ts = now }
+			elseif t.source == 'asn' and t.ip and t.asn_org then
+				ip_name_rows[#ip_name_rows + 1] = { ip = t.ip, name = t.asn_org, source = 'asn', ts = now }
 			end
 			local up = (dir == 'orig') and d.d_orig or d.d_reply
 			local down = (dir == 'orig') and d.d_reply or d.d_orig
@@ -253,23 +261,37 @@ function M.poll(ctx, now)
 		end
 	end
 
-	-- ASN org for IPs still unresolved after DNS + SNI (same tick + cache).
-	local asn_found = 0
+	-- Service CIDR then ASN for IPs still unresolved after DNS + SNI.
+	local service_found, asn_found = 0, 0
 	for _, ip in ipairs(unresolved_ips) do
 		if not dns.lookup(ctx.dns, nil, ip, now) and not sni.lookup(ctx.sni, ip, now) then
-			local org = asn.lookup(ctx.asn, ip, cfg)
-			if org then
-				asn_found = asn_found + 1
-				ip_name_rows[#ip_name_rows + 1] = { ip = ip, name = org, source = 'asn', ts = now }
+			local label = service.lookup(ctx.service, ip, cfg)
+			if label then
+				service_found = service_found + 1
+				ip_name_rows[#ip_name_rows + 1] = { ip = ip, name = label, source = 'service', ts = now }
 				if targets[ip] and tonumber(targets[ip].unresolved) == 1 then
-					targets[ip].display = org
+					targets[ip].display = label
 					targets[ip].unresolved = 0
-					targets[ip].source = 'asn'
+					targets[ip].source = 'service'
+				end
+			else
+				local org = asn.lookup(ctx.asn, ip, cfg)
+				if org then
+					asn_found = asn_found + 1
+					ip_name_rows[#ip_name_rows + 1] = { ip = ip, name = org, source = 'asn', ts = now }
+					if targets[ip] and tonumber(targets[ip].unresolved) == 1 then
+						targets[ip].display = ip
+						targets[ip].unresolved = 0
+						targets[ip].source = 'asn'
+						targets[ip].asn_org = org
+					end
 				end
 			end
 		end
 	end
+	res.service = { found = service_found }
 	res.asn = { found = asn_found }
+	ctx.service_status = service.status(ctx.service, cfg)
 	ctx.asn_status = asn.status(ctx.asn, cfg)
 
 	-- Disk gate before stitch/live/SQL so pause does not skew sessions (F4).
@@ -344,6 +366,13 @@ function M.status_payload(ctx, res, now)
 	if as.update and as.update.state == 'error' then
 		warnings[#warnings + 1] = 'asn_update_failed'
 	end
+	local svc = ctx.service_status or service.status(ctx.service, ctx.cfg)
+	if (tonumber(ctx.cfg.service_enable) or 1) ~= 0 and not svc.available then
+		warnings[#warnings + 1] = 'service_unavailable'
+	end
+	if svc.update and svc.update.state == 'error' then
+		warnings[#warnings + 1] = 'service_update_failed'
+	end
 	return {
 		state = state,
 		updated = now,
@@ -357,6 +386,7 @@ function M.status_payload(ctx, res, now)
 		warnings = warnings,
 		sni = ss,
 		asn = as,
+		service = svc,
 		live = json.object(snap.devices),
 		live_pairs = pairs_live,
 	}
