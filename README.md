@@ -17,7 +17,7 @@ OpenWrt / ImmortalWrt / iStoreOS LuCI 插件：按局域网设备统计「谁访
 
 ## 截图
 
-截图已脱敏：局域网 IP 改为 `192.168.1.x`，外网目标改为文档保留段 `203.0.113.x`，MAC 遮盖，设备名去掉尾部硬件 ID（保留如 `X30E`、`yeelink-light-lamp9` 等可读前缀）。
+截图已脱敏：局域网 IP → `192.168.1.x`，外网 IP → `203.0.113.x`，MAC 遮盖；设备名去掉尾部硬件 ID（保留如 `X30E`、`Pixel-6-Pro`）；**右侧目的地 / 会话目标 / 设备卡片主目标**中的真实域名与 ASN 组织名替换为 `serviceN.example.com` / `Cloud-Org-N`。
 
 ### 总览（拓扑 + 设备网格）
 
