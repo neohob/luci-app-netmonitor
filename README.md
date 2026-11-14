@@ -38,7 +38,7 @@ Release 提供 **architecture = all** 的通用包，不区分芯片（x86_64 / 
 
 ### 方式 A：opkg（传统 `.ipk`）
 
-从 [Releases](../../releases) 下载两个包后：
+从 [Releases](https://github.com/neohob/luci-app-netmonitor/releases) 下载两个包后：
 
 ```sh
 opkg update
