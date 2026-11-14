@@ -21,15 +21,15 @@ OpenWrt / ImmortalWrt / iStoreOS LuCI 插件：按局域网设备统计「谁访
 
 ### 总览（拓扑 + 设备网格）
 
-![总览](docs/images/overview.png)
+![总览](docs/images/overview-v030.png)
 
 ### 设备明细（按天会话）
 
-![设备明细](docs/images/device.png)
+![设备明细](docs/images/device-v030.png)
 
 ### 设置（存储 / 探测 / ASN 归属库）
 
-![设置](docs/images/settings.png)
+![设置](docs/images/settings-v030.png)
 
 ## 安装
 
