@@ -47,10 +47,15 @@ function errorText(code) {
 }
 
 function cssLink() {
-	if (document.querySelector('link[data-netmonitor]')) return;
+	var href = L.resource('netmonitor/netmonitor.css') + '?v=0.4.2-cal2';
+	var existing = document.querySelector('link[data-netmonitor]');
+	if (existing) {
+		if (existing.getAttribute('href') !== href) existing.setAttribute('href', href);
+		return;
+	}
 	document.head.appendChild(E('link', {
 		'rel': 'stylesheet',
-		'href': L.resource('netmonitor/netmonitor.css'),
+		'href': href,
 		'data-netmonitor': '1'
 	}));
 }

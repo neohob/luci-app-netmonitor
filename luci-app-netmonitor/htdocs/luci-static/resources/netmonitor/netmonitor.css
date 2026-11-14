@@ -103,14 +103,22 @@
 	position: absolute; z-index: 40; top: calc(100% + 6px); left: 0;
 	min-width: 280px; padding: 10px 10px 12px; border-radius: 10px;
 	border: 1px solid var(--nm-border);
-	/* Track Argon / LuCI theme tokens so day↔night auto-switch follows */
+	/* Prefer theme tokens; JS also paints live surface colors when opened */
 	background: var(--background-color-medium,
 		var(--background-color-high,
 		var(--background-color,
-		var(--bg-color-high, Canvas))));
+		var(--bg-color-high, inherit))));
 	color: var(--text-color-high, var(--font-color, inherit));
-	color-scheme: light dark;
 	box-shadow: 0 10px 28px rgba(0,0,0,.28);
+}
+/* Argon / ImmortalWrt dark */
+body.dark .nm-cal-panel,
+html.dark .nm-cal-panel,
+.dark .nm-cal-panel,
+[data-theme="dark"] .nm-cal-panel,
+.darkmode .nm-cal-panel {
+	background: var(--background-color, var(--dark-main-background-color, #2a2c32));
+	color: var(--text-color-high, var(--white, #e8e8e8));
 }
 .nm-cal-head {
 	display: grid; grid-template-columns: 28px 1fr 28px 28px; align-items: center;

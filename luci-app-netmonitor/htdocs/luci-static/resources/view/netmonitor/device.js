@@ -170,6 +170,25 @@ return view.extend({
 			'click': function(ev) { ev.stopPropagation(); }
 		}, [ head ].concat(grid));
 
+		/* Argon auto light/dark: CSS vars are unreliable on overlays — copy the
+		   live page surface so the panel never falls back to white-on-light-text. */
+		try {
+			var el = document.querySelector('.main-right') ||
+				document.querySelector('#maincontent') ||
+				document.querySelector('.cbi-map') ||
+				document.body;
+			while (el) {
+				var cs = window.getComputedStyle(el);
+				var bg = cs.backgroundColor;
+				if (bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)') {
+					panel.style.backgroundColor = bg;
+					if (cs.color) panel.style.color = cs.color;
+					break;
+				}
+				el = el.parentElement;
+			}
+		} catch (e) {}
+
 		var backdrop = E('div', {
 			'class': 'nm-cal-backdrop',
 			'click': function(ev) {
