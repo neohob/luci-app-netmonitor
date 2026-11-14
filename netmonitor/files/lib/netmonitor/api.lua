@@ -249,7 +249,10 @@ function M.device_detail(args, env)
 	for d in pairs(dayset) do days[#days + 1] = d end
 	table.sort(days, function(a, b) return a > b end)
 
-	local day = args.day or days[1]
+	-- Default to today (router local calendar); may be empty if no sessions yet.
+	local today = timeutil.day_key((env and env.now) or os.time())
+	local day = args.day
+	if not day or day == '' then day = today end
 	local dev = q(path, 'SELECT mac, ip, hostname, first_seen, last_seen FROM devices WHERE mac = ' .. qm .. ';')[1]
 	local out = { mac = mac, device = dev, days = days, day = day, sessions = json.array() }
 	if not day then return out end

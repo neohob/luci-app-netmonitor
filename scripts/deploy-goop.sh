@@ -85,7 +85,26 @@ fi
 /etc/init.d/rpcd restart
 /etc/init.d/uhttpd restart 2>/dev/null || true
 rm -rf /tmp/luci-* 2>/dev/null || true
+
+# rpcd sometimes comes up without the session object (LuCI login breaks).
+# Wait and retry restart until session is listed.
+ok=0
+for attempt in 1 2 3 4 5; do
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if ubus -t 1 list session >/dev/null 2>&1; then ok=1; break; fi
+    sleep 0.3
+  done
+  [ "$ok" = 1 ] && break
+  echo "rpcd session missing after attempt $attempt — restarting rpcd" >&2
+  /etc/init.d/rpcd restart
+  sleep 0.5
+done
+if [ "$ok" != 1 ]; then
+  echo "ERROR: ubus session still missing; LuCI login will fail" >&2
+  exit 1
+fi
 ubus -v list netmonitor | head -20
+ubus list | grep -E "session|netmonitor|uci|file" || true
 '
 
 echo "==> done"
