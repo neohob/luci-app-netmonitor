@@ -99,4 +99,49 @@ function M.build(sessions, samples, opts)
 	return out
 end
 
+-- Merge same-display rows for ubus-sized payloads. Busy devices can produce
+-- thousands of sessions/day (~1MB+ JSON), which hangs/times out rpcd and logs
+-- the LuCI user out. Keep children only when the flat list is small enough.
+-- opts.max_flat default 400.
+function M.merge_by_display(rows, opts)
+	opts = opts or {}
+	local max_flat = tonumber(opts.max_flat) or 400
+	local map, order = {}, {}
+	for _, r in ipairs(rows or {}) do
+		local key = tostring(r.display or r.target or '')
+		local g = map[key]
+		if not g then
+			g = {
+				target = r.target,
+				display = r.display or r.target,
+				bytes_up = 0, bytes_down = 0, bytes_total = 0, duration = 0,
+				started_at = tonumber(r.started_at) or 0,
+				unresolved = true, active = false, split = false,
+				session_count = 0, children = {},
+			}
+			map[key] = g
+			order[#order + 1] = key
+		end
+		g.session_count = g.session_count + 1
+		g.bytes_up = g.bytes_up + (tonumber(r.bytes_up) or 0)
+		g.bytes_down = g.bytes_down + (tonumber(r.bytes_down) or 0)
+		g.bytes_total = g.bytes_total + (tonumber(r.bytes_total) or 0)
+		g.duration = g.duration + (tonumber(r.duration) or 0)
+		local st = tonumber(r.started_at) or 0
+		if st > 0 and (g.started_at == 0 or st < g.started_at) then g.started_at = st end
+		if not r.unresolved then g.unresolved = false end
+		if r.active then g.active = true end
+		if r.split then g.split = true end
+		g.children[#g.children + 1] = r
+	end
+	local keep_children = #(rows or {}) <= max_flat
+	local out = {}
+	for _, k in ipairs(order) do
+		local g = map[k]
+		if not keep_children then g.children = nil end
+		out[#out + 1] = g
+	end
+	return out, not keep_children
+end
+
 return M

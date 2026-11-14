@@ -150,6 +150,25 @@ H.case('W7', 'deltas, 61s gap, deltas -> two sessions with duration = last - fir
 	H.eq(closed[1].closed, 1, 'closed flag')
 end)
 
+H.case('W8b', 'merge_by_display sums bytes and can strip children', function()
+	local detail = require 'netmonitor.detail'
+	local rows = {
+		{ target = 'a', display = 'Same', started_at = 100, duration = 10, bytes_up = 1, bytes_down = 2, bytes_total = 3, unresolved = false },
+		{ target = 'b', display = 'Same', started_at = 50, duration = 5, bytes_up = 4, bytes_down = 5, bytes_total = 9, unresolved = false },
+		{ target = 'c', display = 'Other', started_at = 80, duration = 1, bytes_up = 1, bytes_down = 0, bytes_total = 1, unresolved = true },
+	}
+	local merged, stripped = detail.merge_by_display(rows, { max_flat = 10 })
+	H.eq(stripped, false, 'keep children when small')
+	H.eq(#merged, 2, 'two displays')
+	local same = merged[1].display == 'Same' and merged[1] or merged[2]
+	H.eq(same.session_count, 2, 'count')
+	H.eq(same.bytes_total, 12, 'sum total')
+	H.eq(same.started_at, 50, 'earliest start')
+	H.eq(#(same.children or {}), 2, 'children kept')
+	local _, stripped2 = detail.merge_by_display(rows, { max_flat = 1 })
+	H.eq(stripped2, true, 'strip children when large')
+end)
+
 H.case('W8', 'session crossing midnight splits into two calendar days', function()
 	local start = os.time({ year = 2026, month = 11, day = 12, hour = 23, min = 59, sec = 30 })
 	local mid = os.time({ year = 2026, month = 11, day = 13, hour = 0, min = 0, sec = 0 })

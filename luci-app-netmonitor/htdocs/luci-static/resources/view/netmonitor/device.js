@@ -183,6 +183,25 @@ return view.extend({
 	},
 
 	groupSessions: function(rows) {
+		/* API may already merge by display (session_count) to keep ubus small. */
+		if (rows.length && rows[0].session_count != null) {
+			return rows.map(function(r) {
+				return {
+					key: String(r.display == null ? r.target : r.display),
+					display: r.display == null ? r.target : r.display,
+					children: r.children || [],
+					session_count: num(r.session_count),
+					bytes_up: num(r.bytes_up),
+					bytes_down: num(r.bytes_down),
+					bytes_total: num(r.bytes_total),
+					duration: num(r.duration),
+					started_at: num(r.started_at),
+					unresolved: !!r.unresolved,
+					active: !!r.active,
+					split: !!r.split
+				};
+			});
+		}
 		var map = {}, keys = [];
 		rows.forEach(function(r) {
 			var key = String(r.display == null ? r.target : r.display);
@@ -283,6 +302,8 @@ return view.extend({
 
 	tagsFor: function(r) {
 		var out = [];
+		var n = num(r.session_count);
+		if (n > 1) out.push(E('span', { 'class': 'nm-tag', 'title': _('合并的会话数') }, n + ' ' + _('次')));
 		if (r.unresolved) out.push(E('span', { 'class': 'nm-tag' }, _('未解析')));
 		if (r.active) out.push(E('span', { 'class': 'nm-tag nm-tag-live' }, _('进行中')));
 		if (r.split) out.push(E('span', { 'class': 'nm-tag', 'title': _('该会话跨越午夜，已按自然日拆分') }, _('跨日')));

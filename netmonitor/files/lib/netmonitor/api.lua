@@ -265,14 +265,32 @@ SELECT s.device, s.target, s.started_at, s.last_seen_at, s.bytes_up, s.bytes_dow
        t.display, t.unresolved
 FROM sessions s LEFT JOIN targets t ON t.key = s.target
 WHERE s.device = %s AND s.started_at < %s AND s.last_seen_at >= %s;]], qm, db.quote(de), db.quote(ds)))
-	local samples = q(path, string.format(
-		'SELECT target, ts, bytes_up, bytes_down FROM traffic_samples WHERE device = %s AND ts >= %s AND ts < %s;',
-		qm, db.quote(ds), db.quote(de)))
+
+	-- Samples are only needed to apportion bytes for sessions that cross
+	-- midnight. Loading a full day of traffic_samples (tens of thousands of
+	-- rows) for a busy device was hanging rpcd/LuCI and kicking the user out.
+	local samples = {}
+	local need_samples = false
+	for _, s in ipairs(sessions) do
+		local a, b = tonumber(s.started_at), tonumber(s.last_seen_at)
+		if a and b and timeutil.day_key(a) ~= timeutil.day_key(b) then
+			need_samples = true
+			break
+		end
+	end
+	if need_samples then
+		samples = q(path, string.format(
+			'SELECT target, ts, bytes_up, bytes_down FROM traffic_samples WHERE device = %s AND ts >= %s AND ts < %s;',
+			qm, db.quote(ds), db.quote(de)))
+	end
+
 	local grouped = detail.build(sessions, samples, { day = day, sort = args.sort })
 	if grouped[1] then
-		out.sessions = json.array(grouped[1].rows)
+		local merged, stripped = detail.merge_by_display(grouped[1].rows, { max_flat = 400 })
+		out.sessions = json.array(merged)
 		out.bytes_up, out.bytes_down, out.bytes_total =
 			grouped[1].bytes_up, grouped[1].bytes_down, grouped[1].bytes_total
+		if stripped then out.children_omitted = true end
 	end
 	out.approximate = true
 	return out
