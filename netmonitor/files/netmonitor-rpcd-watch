@@ -1,0 +1,18 @@
+#!/bin/sh
+# Keep LuCI login working: if ubus `session` disappears (rpcd crashed or
+# procd gave up respawning after repeated failures), start/restart rpcd.
+# Not related to netmonitor DB size — session is provided by rpcd itself.
+
+INTERVAL="${NM_RPCD_WATCH_INTERVAL:-15}"
+
+while :; do
+	if ! ubus -t 1 list session >/dev/null 2>&1; then
+		logger -t netmonitor-rpcd-watch "ubus session missing; recovering rpcd"
+		/etc/init.d/rpcd start >/dev/null 2>&1 || true
+		sleep 1
+		if ! ubus -t 1 list session >/dev/null 2>&1; then
+			/etc/init.d/rpcd restart >/dev/null 2>&1 || true
+		fi
+	fi
+	sleep "$INTERVAL"
+done

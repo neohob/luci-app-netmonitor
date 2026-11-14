@@ -71,6 +71,7 @@ cp "$ROOT/netmonitor/files/netmonitor.uci-defaults" "$NM_DATA/etc/uci-defaults/9
 cp "$ROOT/netmonitor/files/netmonitor-collector" "$NM_DATA/usr/sbin/netmonitor-collector"
 cp "$ROOT/netmonitor/files/netmonitor-dns-sniff" "$NM_DATA/usr/sbin/netmonitor-dns-sniff"
 cp "$ROOT/netmonitor/files/netmonitor-asn-update" "$NM_DATA/usr/sbin/netmonitor-asn-update"
+cp "$ROOT/netmonitor/files/netmonitor-rpcd-watch" "$NM_DATA/usr/sbin/netmonitor-rpcd-watch"
 cp "$ROOT/netmonitor/files/rpcd-netmonitor" "$NM_DATA/usr/libexec/rpcd/netmonitor"
 cp "$ROOT/netmonitor/files/lib/netmonitor/"*.lua "$NM_DATA/usr/lib/lua/netmonitor/"
 chmod 755 "$NM_DATA/etc/init.d/netmonitor" \
@@ -78,6 +79,7 @@ chmod 755 "$NM_DATA/etc/init.d/netmonitor" \
   "$NM_DATA/usr/sbin/netmonitor-collector" \
   "$NM_DATA/usr/sbin/netmonitor-dns-sniff" \
   "$NM_DATA/usr/sbin/netmonitor-asn-update" \
+  "$NM_DATA/usr/sbin/netmonitor-rpcd-watch" \
   "$NM_DATA/usr/libexec/rpcd/netmonitor"
 
 mkdir -p "$STAGE/extra-control/netmonitor"
@@ -98,6 +100,17 @@ cat > "$STAGE/extra-control/netmonitor/postinst" <<'EOF'
 /etc/init.d/netmonitor enable 2>/dev/null || true
 /etc/init.d/netmonitor restart 2>/dev/null || true
 /etc/init.d/rpcd restart 2>/dev/null || true
+# Ensure LuCI session object is back (rpcd can come up without it briefly,
+# or stay down after procd respawn limit).
+ok=0
+i=0
+while [ "$i" -lt 20 ]; do
+	if ubus -t 1 list session >/dev/null 2>&1; then ok=1; break; fi
+	/etc/init.d/rpcd start >/dev/null 2>&1 || true
+	i=$((i + 1))
+	sleep 1
+done
+[ "$ok" = 1 ] || /etc/init.d/rpcd restart >/dev/null 2>&1 || true
 exit 0
 EOF
 cat > "$STAGE/extra-control/netmonitor/prerm" <<'EOF'
@@ -138,6 +151,15 @@ rm -f /tmp/luci-indexcache* 2>/dev/null || true
 rm -rf /tmp/luci-modulecache 2>/dev/null || true
 /etc/init.d/rpcd restart 2>/dev/null || true
 /etc/init.d/uhttpd restart 2>/dev/null || true
+ok=0
+i=0
+while [ "$i" -lt 20 ]; do
+	if ubus -t 1 list session >/dev/null 2>&1; then ok=1; break; fi
+	/etc/init.d/rpcd start >/dev/null 2>&1 || true
+	i=$((i + 1))
+	sleep 1
+done
+[ "$ok" = 1 ] || /etc/init.d/rpcd restart >/dev/null 2>&1 || true
 exit 0
 EOF
 
@@ -222,6 +244,7 @@ install_pkg() {
   done < "\$FILES"
   chmod 755 "\$NM_DESTDIR/etc/init.d/\$INIT" 2>/dev/null || true
   chmod 755 "\$NM_DESTDIR/usr/sbin/netmonitor-collector" 2>/dev/null || true
+  chmod 755 "\$NM_DESTDIR/usr/sbin/netmonitor-rpcd-watch" 2>/dev/null || true
   chmod 755 "\$NM_DESTDIR/usr/libexec/rpcd/netmonitor" 2>/dev/null || true
 
   if [ -n "\$NM_DESTDIR" ]; then
@@ -238,6 +261,13 @@ install_pkg() {
   /etc/init.d/\$INIT restart 2>/dev/null || true
   /etc/init.d/rpcd restart 2>/dev/null || true
   /etc/init.d/uhttpd restart 2>/dev/null || true
+  i=0
+  while [ "\$i" -lt 20 ]; do
+    ubus -t 1 list session >/dev/null 2>&1 && break
+    /etc/init.d/rpcd start >/dev/null 2>&1 || true
+    i=\$((i + 1))
+    sleep 1
+  done
   echo "==> 完成。LuCI：管控 -> 流量监控"
 }
 

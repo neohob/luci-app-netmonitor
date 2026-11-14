@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=netmonitor
-PKG_VERSION:=0.4.0
+PKG_VERSION:=0.4.1
 PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 
@@ -38,6 +38,7 @@ define Package/netmonitor/install
 	$(INSTALL_BIN) ./files/netmonitor-collector $(1)/usr/sbin/netmonitor-collector
 	$(INSTALL_BIN) ./files/netmonitor-dns-sniff $(1)/usr/sbin/netmonitor-dns-sniff
 	$(INSTALL_BIN) ./files/netmonitor-asn-update $(1)/usr/sbin/netmonitor-asn-update
+	$(INSTALL_BIN) ./files/netmonitor-rpcd-watch $(1)/usr/sbin/netmonitor-rpcd-watch
 	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
 	$(INSTALL_BIN) ./files/rpcd-netmonitor $(1)/usr/libexec/rpcd/netmonitor
 	$(INSTALL_DIR) $(1)/usr/lib/lua/netmonitor
