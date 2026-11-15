@@ -256,6 +256,46 @@ local function valid_mac(mac)
 	return type(mac) == 'string' and mac:match('^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$') ~= nil
 end
 
+-- Display / source resolution shared by device_detail list queries.
+local DETAIL_DISPLAY = [[COALESCE(
+  CASE WHEN t.source IN ('dns','sni','http_host','service') THEN t.display END,
+  CASE WHEN n.source IN ('dns','sni','http_host','service') THEN n.name END,
+  CASE WHEN t.source = 'asn' THEN COALESCE(t.ip, s.target) END,
+  t.display, s.target
+)]]
+local DETAIL_SOURCE = [[COALESCE(
+  CASE WHEN t.source IN ('dns','sni','http_host','service','asn') THEN t.source END,
+  CASE WHEN n.source IN ('dns','sni','http_host','service','asn') THEN n.source END,
+  t.source, 'ip'
+)]]
+local DETAIL_UNRESOLVED = [[CASE
+  WHEN t.source IN ('dns','sni','http_host','service','asn') THEN 0
+  WHEN n.source IN ('dns','sni','http_host','service','asn') THEN 0
+  WHEN t.unresolved = 0 THEN 0
+  ELSE 1
+END]]
+
+local DETAIL_PAGE_DEFAULT = 80
+local DETAIL_PAGE_MAX = 200
+-- Below this session count, return the full merged day (with children when small).
+local DETAIL_FULL_MAX = 500
+
+local function detail_order_sql(sort)
+	if sort == 'time' then return 'started_at DESC, display ASC'
+	elseif sort == 'target' then return 'display ASC, started_at DESC'
+	elseif sort == 'up' then return 'bytes_up DESC, started_at DESC'
+	elseif sort == 'down' then return 'bytes_down DESC, started_at DESC'
+	elseif sort == 'duration' then return 'duration DESC, started_at DESC'
+	end
+	return 'bytes_total DESC, started_at DESC'
+end
+
+local function detail_join_from()
+	return [[FROM sessions s
+LEFT JOIN targets t ON t.key = s.target
+LEFT JOIN ip_names n ON n.ip = COALESCE(t.ip, CASE WHEN s.target GLOB '*.*.*.*' THEN s.target END)]]
+end
+
 function M.device_detail(args, env)
 	args = args or {}
 	if not valid_mac(args.mac) then return { error = 'bad_mac' } end
@@ -292,31 +332,96 @@ function M.device_detail(args, env)
 	local ds = timeutil.parse_day(day)
 	if not ds then return { error = 'bad_day' } end
 	local de = timeutil.next_day_start(ds)
+	local qds, qde = db.quote(ds), db.quote(de)
+	local day_where = string.format('s.device = %s AND s.started_at < %s AND s.last_seen_at >= %s', qm, qde, qds)
+
+	local tot = q(path, string.format(
+		'SELECT COALESCE(SUM(bytes_up),0) AS u, COALESCE(SUM(bytes_down),0) AS d, COUNT(*) AS n FROM sessions s WHERE %s;',
+		day_where))[1]
+	out.bytes_up = tonumber(tot and tot.u) or 0
+	out.bytes_down = tonumber(tot and tot.d) or 0
+	out.bytes_total = out.bytes_up + out.bytes_down
+	out.session_count = tonumber(tot and tot.n) or 0
+	out.approximate = true
+
+	local limit = math.floor(tonumber(args.limit) or DETAIL_PAGE_DEFAULT)
+	if limit < 1 then limit = DETAIL_PAGE_DEFAULT end
+	if limit > DETAIL_PAGE_MAX then limit = DETAIL_PAGE_MAX end
+	local offset = math.floor(tonumber(args.offset) or 0)
+	if offset < 0 then offset = 0 end
+	out.limit, out.offset = limit, offset
+
+	local qfilter = tostring(args.q or ''):gsub('[%%_\'\\]', '')
+	local filter_sql = ''
+	if qfilter ~= '' then
+		local like = db.quote('%' .. qfilter .. '%')
+		filter_sql = string.format(' WHERE display LIKE %s OR target LIKE %s', like, like)
+	end
+
+	-- Busy days: aggregate in SQL and page by display group (avoids rpcd timeout).
+	if out.session_count > DETAIL_FULL_MAX or offset > 0 or qfilter ~= '' then
+		local order = detail_order_sql(args.sort)
+		local sql = string.format([[
+SELECT display, target, source, asn_org, bytes_up, bytes_down, bytes_total,
+  duration, started_at, unresolved, active, session_count
+FROM (
+  SELECT
+    %s AS display,
+    MIN(s.target) AS target,
+    MIN(%s) AS source,
+    MAX(CASE WHEN n.source = 'asn' THEN n.name END) AS asn_org,
+    SUM(s.bytes_up) AS bytes_up,
+    SUM(s.bytes_down) AS bytes_down,
+    SUM(s.bytes_up) + SUM(s.bytes_down) AS bytes_total,
+    SUM(s.last_seen_at - s.started_at) AS duration,
+    MIN(s.started_at) AS started_at,
+    MIN(%s) AS unresolved,
+    MAX(CASE WHEN s.closed = 0 THEN 1 ELSE 0 END) AS active,
+    COUNT(*) AS session_count
+  %s
+  WHERE %s
+  GROUP BY display
+)%s
+ORDER BY %s
+LIMIT %d OFFSET %d;]],
+			DETAIL_DISPLAY, DETAIL_SOURCE, DETAIL_UNRESOLVED,
+			detail_join_from(), day_where, filter_sql, order, limit + 1, offset)
+		local rows = q(path, sql)
+		local has_more = #rows > limit
+		if has_more then rows[#rows] = nil end
+		local sessions = json.array()
+		for _, r in ipairs(rows) do
+			sessions[#sessions + 1] = {
+				target = r.target,
+				display = r.display,
+				source = r.source,
+				asn_org = r.asn_org,
+				bytes_up = tonumber(r.bytes_up) or 0,
+				bytes_down = tonumber(r.bytes_down) or 0,
+				bytes_total = tonumber(r.bytes_total) or 0,
+				duration = tonumber(r.duration) or 0,
+				started_at = tonumber(r.started_at) or 0,
+				unresolved = tonumber(r.unresolved) == 1,
+				active = tonumber(r.active) == 1,
+				session_count = tonumber(r.session_count) or 1,
+				split = false,
+			}
+		end
+		out.sessions = sessions
+		out.has_more = has_more
+		out.children_omitted = true
+		out.paged = true
+		return out
+	end
 
 	local sessions = q(path, string.format([[
 SELECT s.device, s.target, s.started_at, s.last_seen_at, s.bytes_up, s.bytes_down, s.closed,
-  COALESCE(
-    CASE WHEN t.source IN ('dns','sni','http_host','service') THEN t.display END,
-    CASE WHEN n.source IN ('dns','sni','http_host','service') THEN n.name END,
-    CASE WHEN t.source = 'asn' THEN COALESCE(t.ip, s.target) END,
-    t.display, s.target
-  ) AS display,
-  CASE
-    WHEN t.source IN ('dns','sni','http_host','service','asn') THEN 0
-    WHEN n.source IN ('dns','sni','http_host','service','asn') THEN 0
-    WHEN t.unresolved = 0 THEN 0
-    ELSE 1
-  END AS unresolved,
-  COALESCE(
-    CASE WHEN t.source IN ('dns','sni','http_host','service','asn') THEN t.source END,
-    CASE WHEN n.source IN ('dns','sni','http_host','service','asn') THEN n.source END,
-    t.source, 'ip'
-  ) AS source,
+  %s AS display,
+  %s AS unresolved,
+  %s AS source,
   CASE WHEN n.source = 'asn' THEN n.name END AS asn_org
-FROM sessions s
-LEFT JOIN targets t ON t.key = s.target
-LEFT JOIN ip_names n ON n.ip = COALESCE(t.ip, CASE WHEN s.target GLOB '*.*.*.*' THEN s.target END)
-WHERE s.device = %s AND s.started_at < %s AND s.last_seen_at >= %s;]], qm, db.quote(de), db.quote(ds)))
+%s
+WHERE %s;]], DETAIL_DISPLAY, DETAIL_UNRESOLVED, DETAIL_SOURCE, detail_join_from(), day_where))
 
 	-- Samples are only needed to apportion bytes for sessions that cross
 	-- midnight. Loading a full day of traffic_samples (tens of thousands of
@@ -333,18 +438,22 @@ WHERE s.device = %s AND s.started_at < %s AND s.last_seen_at >= %s;]], qm, db.qu
 	if need_samples then
 		samples = q(path, string.format(
 			'SELECT target, ts, bytes_up, bytes_down FROM traffic_samples WHERE device = %s AND ts >= %s AND ts < %s;',
-			qm, db.quote(ds), db.quote(de)))
+			qm, qds, qde))
 	end
 
 	local grouped = detail.build(sessions, samples, { day = day, sort = args.sort })
 	if grouped[1] then
 		local merged, stripped = detail.merge_by_display(grouped[1].rows, { max_flat = 400 })
 		out.sessions = json.array(merged)
-		out.bytes_up, out.bytes_down, out.bytes_total =
-			grouped[1].bytes_up, grouped[1].bytes_down, grouped[1].bytes_total
+		-- Prefer exact day totals from the cheap SUM above; fall back to build.
+		if out.session_count == 0 then
+			out.bytes_up, out.bytes_down, out.bytes_total =
+				grouped[1].bytes_up, grouped[1].bytes_down, grouped[1].bytes_total
+		end
 		if stripped then out.children_omitted = true end
 	end
-	out.approximate = true
+	out.has_more = false
+	out.paged = false
 	return out
 end
 
@@ -508,7 +617,8 @@ M.METHODS = {
 	status = json.object(),
 	topology = { range = '1h' },
 	devices = { range = '1h' },
-	device_detail = { mac = 'aa:bb:cc:dd:ee:ff', day = '2026-01-01', sort = 'time' },
+	device_detail = { mac = 'aa:bb:cc:dd:ee:ff', day = '2026-01-01', sort = 'traffic',
+		limit = 80, offset = 0, q = '' },
 	get_config = json.object(),
 	estimate = { retention_value = 30, retention_unit = 'day', db_path = '/mnt/usb' },
 	check_path = { path = '/mnt/usb' },

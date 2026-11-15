@@ -6,7 +6,8 @@
 var callStatus = rpc.declare({ object: 'netmonitor', method: 'status' });
 var callTopology = rpc.declare({ object: 'netmonitor', method: 'topology', params: [ 'range' ] });
 var callDevices = rpc.declare({ object: 'netmonitor', method: 'devices', params: [ 'range' ] });
-var callDetail = rpc.declare({ object: 'netmonitor', method: 'device_detail', params: [ 'mac', 'day', 'sort' ] });
+var callDetail = rpc.declare({ object: 'netmonitor', method: 'device_detail',
+	params: [ 'mac', 'day', 'sort', 'limit', 'offset', 'q' ] });
 var callGetConfig = rpc.declare({ object: 'netmonitor', method: 'get_config' });
 var callSetConfig = rpc.declare({ object: 'netmonitor', method: 'set_config',
 	params: [ 'db_path', 'interval', 'idle_gap', 'retention_value', 'retention_unit', 'enabled',
@@ -50,7 +51,7 @@ function errorText(code) {
 }
 
 function cssLink() {
-	var href = L.resource('netmonitor/netmonitor.css') + '?v=0.5.0-svc';
+	var href = L.resource('netmonitor/netmonitor.css') + '?v=0.5.3-page';
 	var existing = document.querySelector('link[data-netmonitor]');
 	if (existing) {
 		if (existing.getAttribute('href') !== href) existing.setAttribute('href', href);

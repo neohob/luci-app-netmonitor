@@ -228,6 +228,7 @@ INSERT INTO sessions VALUES (%s,'x.com',%d,%d,300,3000,0);]],
 	H.ok(r.day, 'default day')
 	H.ok(#r.sessions >= 1, 'sessions for day')
 	H.eq(r.approximate, true, 'approximate flag')
+	H.eq(r.has_more, false, 'small day not paged')
 	local day12 = api.call('device_detail', { mac = mac(1), day = '2026-11-12' }, env_for(dir, file, now))
 	H.eq(day12.day, '2026-11-12', 'day filter')
 	for _, s in ipairs(day12.sessions) do
@@ -242,6 +243,43 @@ INSERT INTO sessions VALUES (%s,'x.com',%d,%d,300,3000,0);]],
 		H.ok(p, 'edge path exists')
 		H.eq(e.color, p.color, 'edge color matches path')
 	end
+	H.rmrf(dir)
+end)
+
+H.case('W19b', 'device_detail pages busy days by display group', function()
+	local db = require 'netmonitor.db'
+	local now = os.time({ year = 2026, month = 11, day = 15, hour = 12 })
+	local day0 = os.time({ year = 2026, month = 11, day = 15, hour = 0, min = 1 })
+	local dir, file = H.new_db()
+	local targets = {}
+	local sess_sql = {}
+	for i = 1, 520 do
+		local key = string.format('host-%d.example', i)
+		targets[#targets + 1] = { key = key, display = key, source = 'dns' }
+		sess_sql[#sess_sql + 1] = string.format('(%s,%s,%d,%d,%d,%d,1)',
+			db.quote(mac(1)), db.quote(key), day0 + i, day0 + i + 10, i * 100, i * 1000)
+	end
+	H.seed(file, {}, {
+		{ mac = mac(1), ip = '192.168.1.3', hostname = 'tower', first_seen = day0, last_seen = now },
+	}, targets)
+	assert(db.exec(file, 'INSERT INTO sessions (device,target,started_at,last_seen_at,bytes_up,bytes_down,closed) VALUES '
+		.. table.concat(sess_sql, ',') .. ';'))
+	local page1 = api.call('device_detail', {
+		mac = mac(1), day = '2026-11-15', sort = 'traffic', limit = 50, offset = 0,
+	}, env_for(dir, file, now))
+	H.ok(not page1.error, 'page1: ' .. tostring(page1.error))
+	H.eq(page1.paged, true, 'paged')
+	H.eq(page1.has_more, true, 'has more')
+	H.eq(#page1.sessions, 50, 'page size')
+	H.ok(page1.session_count >= 520, 'session_count')
+	H.ok(page1.bytes_total > 0, 'day totals')
+	local first = page1.sessions[1]
+	H.ok(first.bytes_total >= page1.sessions[50].bytes_total, 'traffic order')
+	local page2 = api.call('device_detail', {
+		mac = mac(1), day = '2026-11-15', sort = 'traffic', limit = 50, offset = 50,
+	}, env_for(dir, file, now))
+	H.eq(#page2.sessions, 50, 'page2 size')
+	H.ok(page2.sessions[1].display ~= first.display, 'page2 different')
 	H.rmrf(dir)
 end)
 

@@ -32,29 +32,70 @@ return view.extend({
 	sortKey: 'bytes_total',
 	sortDir: 'desc',
 	filter: '',
+	pageSize: 80,
+	offset: 0,
+	loadingMore: false,
 	expanded: null,
 	calOpen: false,
 	calYear: null,
 	calMonth: null,
+
+	apiSort: function() {
+		var k = this.sortKey;
+		if (k === 'display') return 'target';
+		if (k === 'started_at') return 'time';
+		if (k === 'bytes_up') return 'up';
+		if (k === 'bytes_down') return 'down';
+		if (k === 'duration') return 'duration';
+		return 'traffic';
+	},
+
+	fetchDetail: function(offset) {
+		return nm.callDetail(this.mac, this.day, this.apiSort(), this.pageSize, offset || 0, this.filter || '');
+	},
 
 	load: function() {
 		nm.cssLink();
 		this.mac = param('mac');
 		this.day = param('day') || todayKey();
 		this.expanded = {};
+		this.offset = 0;
 		var t = parseDayKey(this.day) || parseDayKey(todayKey());
 		this.calYear = t.y;
 		this.calMonth = t.m;
+		var self = this;
 		return Promise.all([
 			nm.callStatus().catch(function() { return null; }),
-			this.mac ? nm.callDetail(this.mac, this.day, 'time').catch(function() { return null; }) : Promise.resolve(null)
+			this.mac ? self.fetchDetail(0).catch(function() { return null; }) : Promise.resolve(null)
 		]);
 	},
 
 	reload: function() {
 		var self = this;
-		return nm.callDetail(this.mac, this.day, 'time').catch(function() { return null; }).then(function(d) {
+		this.offset = 0;
+		this.expanded = {};
+		return this.fetchDetail(0).catch(function() { return null; }).then(function(d) {
 			self.data = d;
+			self.update();
+		});
+	},
+
+	loadMore: function() {
+		var self = this;
+		if (self.loadingMore || !self.data || !self.data.has_more) return Promise.resolve();
+		self.loadingMore = true;
+		self.update();
+		var next = num(self.data.offset) + num(self.data.limit || self.pageSize);
+		return self.fetchDetail(next).catch(function() { return null; }).then(function(d) {
+			self.loadingMore = false;
+			if (!d || d.error) {
+				self.update();
+				return;
+			}
+			var prev = self.data.sessions || [];
+			self.data = d;
+			self.data.sessions = prev.concat(d.sessions || []);
+			self.offset = next;
 			self.update();
 		});
 	},
@@ -295,6 +336,8 @@ return view.extend({
 	},
 
 	filteredRows: function(d) {
+		/* Server already applies q when paged; still filter client-side for small days. */
+		if (d.paged) return d.sessions || [];
 		var f = (this.filter || '').toLowerCase();
 		return (d.sessions || []).filter(function(r) {
 			if (!f) return true;
@@ -310,8 +353,22 @@ return view.extend({
 			this.sortKey = key;
 			this.sortDir = (key === 'display') ? 'asc' : 'desc';
 		}
-		if (this.tableBox && this.data)
+		if (this.data && this.data.paged)
+			this.reload();
+		else if (this.tableBox && this.data)
 			dom.content(this.tableBox, this.renderTable(this.data));
+	},
+
+	onFilterInput: function(ev) {
+		var self = this;
+		self.filter = ev.target.value;
+		if (self.filterTimer) window.clearTimeout(self.filterTimer);
+		if (self.data && self.data.paged) {
+			self.filterTimer = window.setTimeout(function() { self.reload(); }, 300);
+			return;
+		}
+		if (self.tableBox && self.data)
+			dom.content(self.tableBox, self.renderTable(self.data));
 	},
 
 	th: function(label, key) {
@@ -363,9 +420,13 @@ return view.extend({
 		var self = this;
 		var interval = (this.status && this.status.interval) || 5;
 		var rows = this.filteredRows(d);
-		if (!rows.length) return E('div', { 'class': 'nm-topo-empty' }, _('当天没有会话记录'));
+		if (!rows.length) {
+			return E('div', {}, [
+				E('div', { 'class': 'nm-topo-empty' }, _('当天没有会话记录'))
+			]);
+		}
 
-		var groups = this.sortGroups(this.groupSessions(rows));
+		var groups = d.paged ? this.groupSessions(rows) : this.sortGroups(this.groupSessions(rows));
 		var body = [
 			E('tr', { 'class': 'tr table-titles' }, [
 				this.th(_('目标'), 'display'),
@@ -422,7 +483,26 @@ return view.extend({
 			}
 		});
 
-		return E('table', { 'class': 'table nm-detail' }, body);
+		var wrap = [ E('table', { 'class': 'table nm-detail' }, body) ];
+		if (d.paged) {
+			wrap.push(E('p', { 'class': 'nm-note' },
+				_('已显示 %d 个目标（按当前排序分页；当天会话共约 %d 条）')
+					.format(groups.length, num(d.session_count))));
+		}
+		if (d.has_more) {
+			wrap.push(E('div', { 'class': 'nm-toolbar' }, [
+				E('button', {
+					'class': 'cbi-button cbi-button-action',
+					'type': 'button',
+					'disabled': self.loadingMore ? 'disabled' : null,
+					'click': function(ev) {
+						ev.preventDefault();
+						self.loadMore();
+					}
+				}, self.loadingMore ? _('加载中…') : _('加载更多'))
+			]));
+		}
+		return E('div', {}, wrap);
 	},
 
 	update: function() {
@@ -440,10 +520,7 @@ return view.extend({
 				'class': 'cbi-input-text',
 				'placeholder': _('筛选目标…'),
 				'value': self.filter,
-				'input': function(ev) {
-					self.filter = ev.target.value;
-					dom.content(self.tableBox, self.renderTable(d));
-				}
+				'input': function(ev) { self.onFilterInput(ev); }
 			});
 			this.tableBox = E('div', {}, this.renderTable(d));
 			body = E('div', {}, [
@@ -456,7 +533,7 @@ return view.extend({
 					topo.formatBytes(d.bytes_total || 0), topo.formatBytes(d.bytes_up || 0), topo.formatBytes(d.bytes_down || 0))) : '',
 				E('div', { 'class': 'nm-toolbar' }, [ filterIn ]),
 				this.tableBox,
-				E('p', { 'class': 'nm-note' }, _('开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话；本地 0 点会结清统计会话并重新计数（不断开真实连接）。同名目标已合并，可点击展开明细。')
+				E('p', { 'class': 'nm-note' }, _('开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话；本地 0 点会结清统计会话并重新计数（不断开真实连接）。同名目标已合并；条目多时分页加载，可点「加载更多」。')
 					.format((this.status && this.status.interval) || 5, (this.status && this.status.idle_gap) || 60))
 			]);
 		}
