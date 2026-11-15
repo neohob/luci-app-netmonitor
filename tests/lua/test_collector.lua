@@ -150,6 +150,44 @@ H.case('W7', 'deltas, 61s gap, deltas -> two sessions with duration = last - fir
 	H.eq(closed[1].closed, 1, 'closed flag')
 end)
 
+H.case('W7b', 'calendar midnight soft-rolls stats session; TCP untouched', function()
+	local st = session.new()
+	local before = os.time({ year = 2026, month = 11, day = 14, hour = 23, min = 59, sec = 50 })
+	local after = os.time({ year = 2026, month = 11, day = 15, hour = 0, min = 0, sec = 10 })
+	local function d(up) return { { device = 'm1', target = 'cloud.example', up = up or 100, down = 50 } } end
+	session.stitch(st, before, d(100), 60)
+	session.stitch(st, before + 5, d(200), 60)
+	local n = 0
+	for _ in pairs(st.open) do n = n + 1 end
+	H.eq(n, 1, 'still open before midnight')
+	local open_before = nil
+	for _, s in pairs(st.open) do open_before = s end
+	H.eq(open_before.bytes_up, 300, 'pre-midnight bytes')
+
+	local changed = session.stitch(st, after, d(40), 60)
+	local closed_row, open_row
+	for _, s in ipairs(changed) do
+		if s.closed == 1 then closed_row = s end
+		if s.closed == 0 then open_row = s end
+	end
+	H.ok(closed_row, 'yesterday session closed for accounting')
+	H.eq(closed_row.bytes_up, 300, 'yesterday keeps its bytes')
+	H.eq(closed_row.started_at, before, 'yesterday start unchanged')
+	H.ok(open_row, 'new day session opened')
+	H.eq(open_row.started_at, after, 'new session starts after midnight')
+	H.eq(open_row.bytes_up, 40, 'new day counts from zero')
+	H.eq(open_row.closed, 0, 'new session open')
+	-- idle across midnight with no deltas still closes the old stats row
+	local st3 = session.new()
+	session.stitch(st3, before, d(10), 60)
+	local rolled = session.stitch(st3, after, {}, 60)
+	H.eq(#rolled, 1, 'rollover without traffic')
+	H.eq(rolled[1].closed, 1, 'closed on day change')
+	n = 0
+	for _ in pairs(st3.open) do n = n + 1 end
+	H.eq(n, 0, 'nothing left open without deltas')
+end)
+
 H.case('W8b', 'merge_by_display sums bytes and can strip children', function()
 	local detail = require 'netmonitor.detail'
 	local rows = {
@@ -206,6 +244,11 @@ H.case('W8', 'session crossing midnight splits into two calendar days', function
 
 	local only = detail.build(sessions, samples, { day = '2026-11-13' })
 	H.eq(#only, 1, 'day filter')
+	H.eq(only[1].rows[1].split, false, 'day view hides cross-day tag')
+	H.eq(days[1].rows[1].split, true, 'unfiltered multi-day still marked split')
+	local day12 = detail.build(sessions, samples, { day = '2026-11-12' })
+	H.eq(day12[1].rows[1].bytes_up, 300, 'yesterday chip keeps yesterday bytes')
+	H.eq(only[1].rows[1].bytes_up, 300, 'today chip keeps today bytes only')
 end)
 
 H.case('W22', 'retention_error keeps running (not db_error / not write-pause) (F21)', function()

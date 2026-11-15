@@ -4,7 +4,8 @@ OpenWrt / ImmortalWrt / iStoreOS LuCI 插件：按局域网设备统计「谁访
 
 - **左→中→右流量拓扑**：设备 → 网关 → 目标（Top4 +「其他」），同色路径、流动动画；边上可看 ↑上传 / ↓下载
 - **设备网格**：全量设备卡片，时段 ↑↓ 与实时速率
-- **按天会话明细**：同名目标合并可展开、表头排序、日历选日（有数据日高亮）
+- **按天会话明细**：同名目标合并可展开、表头排序、日历选日（有数据日高亮）；选哪天只看哪天
+- **自然日结清**：本地 0 点软切换统计会话（不断开真实 TCP）；空闲超过 `idle_gap` 再起流量则重新计数
 - **目标命名**：DNS → SNI/Host → **云/CDN 服务网段**（字节跳动、Cloudflare、AWS…）→ IP + ASN 标签 → 纯 IP
 - **服务网段库**：设置页可启用与定时/手动更新（metowolf + disposable，约 340 KiB）
 - **ASN 归属库**：作标签补充（主名不再用 Chinanet 这类宽泛组织名）；与 PassWall / MosDNS 分流 geoip 无关
@@ -14,7 +15,7 @@ OpenWrt / ImmortalWrt / iStoreOS LuCI 插件：按局域网设备统计「谁访
 
 菜单路径：**管控 → 流量监控**
 
-版本变更说明见 [GitHub Releases](https://github.com/neohob/luci-app-netmonitor/releases)，不在本文维护 changelog。
+**当前版本 0.5.1** — 变更说明见 [GitHub Releases](https://github.com/neohob/luci-app-netmonitor/releases)（自然日会话结清、设备日视图不再显示「跨日」）。
 
 ## 截图
 
@@ -47,8 +48,8 @@ Release 提供 **architecture = all** 的通用包，不区分芯片（x86_64 / 
 
 ```sh
 opkg update
-opkg install ./netmonitor_0.5.0-1_all.ipk
-opkg install ./luci-app-netmonitor_0.5.0-1_all.ipk
+opkg install ./netmonitor_0.5.1-1_all.ipk
+opkg install ./luci-app-netmonitor_0.5.1-1_all.ipk
 # 可选：
 opkg install tcpdump
 opkg install libmaxminddb lua-maxminddb
@@ -59,9 +60,9 @@ opkg install libmaxminddb lua-maxminddb
 适合 iStoreOS 或习惯一键脚本的场景（内含采集器 + LuCI，与 CPU 架构无关）：
 
 ```sh
-chmod +x luci-app-netmonitor_0.5.0-1_all.run
-sh luci-app-netmonitor_0.5.0-1_all.run          # 安装 / 升级
-# sh luci-app-netmonitor_0.5.0-1_all.run uninstall  # 卸载（保留配置与数据库）
+chmod +x luci-app-netmonitor_0.5.1-1_all.run
+sh luci-app-netmonitor_0.5.1-1_all.run          # 安装 / 升级
+# sh luci-app-netmonitor_0.5.1-1_all.run uninstall  # 卸载（保留配置与数据库）
 ```
 
 装完刷新 LuCI，进入 **管控 → 流量监控**。建议在设置里把存储目录改到外置磁盘，避免长期写闪存。设置中可「立即更新服务网段」与「立即更新 ASN 数据库」。
@@ -94,7 +95,8 @@ export GOOP_HOST=root@192.168.1.1
 
 ## 说明与限制
 
-- 基于 `nf_conntrack` 字节计数采样（默认 5s），会话起止为约略值
+- 基于 `nf_conntrack` 字节计数采样（默认 5s），会话起止为约略值；监控「会话」≠ 单条 TCP 长连接（`idle_gap` 内有字节即续上）
+- 本地日历 **0 点**会结清统计会话并重新计数，**不断开**真实连接；日明细按所选自然日汇总
 - 开启防火墙 **flow offloading** 时，被卸载连接可能统计不全（界面会提示）
 - 目标名优先级：DNS → SNI / HTTP Host → 云/CDN 服务网段 → IP（+ ASN 标签）→ 原始 IP
 - 服务网段来自 [metowolf/iplist](https://github.com/metowolf/iplist) 与 [disposable/cloud-ip-ranges](https://github.com/disposable/cloud-ip-ranges)

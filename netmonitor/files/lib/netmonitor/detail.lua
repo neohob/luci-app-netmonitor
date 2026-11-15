@@ -1,6 +1,6 @@
--- Device detail: sessions grouped by calendar day. Sessions crossing local
--- midnight are split; split segments take their bytes from the samples that
--- fall inside them, so no traffic is invented.
+-- Device detail: sessions grouped by calendar day. Collector soft-rolls open
+-- sessions at local midnight (stats only). Legacy rows that still span midnight
+-- are split here; split segments take bytes from samples in-range.
 local timeutil = require 'netmonitor.timeutil'
 
 local M = {}
@@ -56,6 +56,8 @@ function M.build(sessions, samples, opts)
 				end
 				d.bytes_up = d.bytes_up + up
 				d.bytes_down = d.bytes_down + down
+				-- Day-scoped views already clipped to one calendar day: never
+				-- surface 「跨日」there (yesterday stays on yesterday's chip).
 				d.rows[#d.rows + 1] = {
 					target = s.target, display = s.display or s.target,
 					unresolved = tonumber(s.unresolved) == 1,
@@ -64,7 +66,7 @@ function M.build(sessions, samples, opts)
 					started_at = seg.started_at, last_seen_at = seg.last_seen_at,
 					duration = seg.last_seen_at - seg.started_at,
 					bytes_up = up, bytes_down = down, bytes_total = up + down,
-					split = #segs > 1,
+					split = (not opts.day) and (#segs > 1),
 					-- Only the final segment of an open session is 「进行中」(F5).
 					active = tonumber(s.closed) == 0
 						and seg.last_seen_at == tonumber(s.last_seen_at),

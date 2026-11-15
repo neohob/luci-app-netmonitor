@@ -339,7 +339,7 @@ return view.extend({
 		else if (r.unresolved)
 			out.push(E('span', { 'class': 'nm-tag' }, _('未解析')));
 		if (r.active) out.push(E('span', { 'class': 'nm-tag nm-tag-live' }, _('进行中')));
-		if (r.split) out.push(E('span', { 'class': 'nm-tag', 'title': _('该会话跨越午夜，已按自然日拆分') }, _('跨日')));
+		/* Day picker already scopes the list; never show 「跨日」here. */
 		return out;
 	},
 
@@ -456,7 +456,7 @@ return view.extend({
 					topo.formatBytes(d.bytes_total || 0), topo.formatBytes(d.bytes_up || 0), topo.formatBytes(d.bytes_down || 0))) : '',
 				E('div', { 'class': 'nm-toolbar' }, [ filterIn ]),
 				this.tableBox,
-				E('p', { 'class': 'nm-note' }, _('开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话。同名目标已合并，可点击展开明细。')
+				E('p', { 'class': 'nm-note' }, _('开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话；本地 0 点会结清统计会话并重新计数（不断开真实连接）。同名目标已合并，可点击展开明细。')
 					.format((this.status && this.status.interval) || 5, (this.status && this.status.idle_gap) || 60))
 			]);
 		}

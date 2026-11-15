@@ -1,5 +1,10 @@
 -- Sampling-derived sessions (ADR-003): a device<->target pair stays in one
 -- session while byte deltas keep arriving within idle_gap seconds.
+-- Calendar-day soft rollover: when the local date advances, open sessions are
+-- closed for accounting and reopened on the next delta (or same poll). Real
+-- TCP/conntrack is never touched — only the stats row is cut at midnight.
+local timeutil = require 'netmonitor.timeutil'
+
 local M = {}
 
 function M.new()
@@ -23,10 +28,28 @@ function M.restore(state, rows)
 	end
 end
 
+-- Close open sessions whose started_at is on a previous local calendar day.
+-- Returns closed rows (already removed from state.open).
+local function roll_calendar_day(state, ts)
+	local today = timeutil.day_key(ts)
+	local closed = {}
+	for k, s in pairs(state.open) do
+		if s.closed == 0 and timeutil.day_key(s.started_at) ~= today then
+			s.closed = 1
+			closed[#closed + 1] = s
+			state.open[k] = nil
+		end
+	end
+	return closed
+end
+
 -- Apply one poll's deltas: { {device=, target=, up=, down=}, ... }.
 -- Returns the list of session rows that changed (to upsert).
 function M.stitch(state, ts, deltas, idle_gap)
 	local changed, seen = {}, {}
+	for _, s in ipairs(roll_calendar_day(state, ts)) do
+		changed[#changed + 1] = s
+	end
 	for _, d in ipairs(deltas) do
 		local k = pair_key(d.device, d.target)
 		local s = state.open[k]
