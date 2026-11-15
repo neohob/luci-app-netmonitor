@@ -14,7 +14,9 @@
 			"type": "firstchild"
 		},
 		"depends": {
-			"acl": [ "luci-app-netmonitor" ]
+			"acl": [
+				"luci-app-netmonitor"
+			]
 		}
 	},
 	"admin/control/netmonitor/overview": {
@@ -37,7 +39,7 @@
 		"order": 30,
 		"action": {
 			"type": "view",
-			"path": "netmonitor/device"
+			"path": "netmonitor/device_054"
 		}
 	}
 }

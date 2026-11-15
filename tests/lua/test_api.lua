@@ -246,7 +246,7 @@ INSERT INTO sessions VALUES (%s,'x.com',%d,%d,300,3000,0);]],
 	H.rmrf(dir)
 end)
 
-H.case('W19b', 'device_detail pages busy days by display group', function()
+H.case('W19b', 'device_detail pages busy days by full destination aggregates', function()
 	local db = require 'netmonitor.db'
 	local now = os.time({ year = 2026, month = 11, day = 15, hour = 12 })
 	local day0 = os.time({ year = 2026, month = 11, day = 15, hour = 0, min = 1 })
@@ -259,6 +259,13 @@ H.case('W19b', 'device_detail pages busy days by display group', function()
 		sess_sql[#sess_sql + 1] = string.format('(%s,%s,%d,%d,%d,%d,1)',
 			db.quote(mac(1)), db.quote(key), day0 + i, day0 + i + 10, i * 100, i * 1000)
 	end
+	-- One busy destination with 5 sessions — page aggregate must sum ALL 5.
+	-- Bytes high enough to rank on the first traffic-sorted page.
+	targets[#targets + 1] = { key = 'busy.example', display = 'busy.example', source = 'dns' }
+	for j = 1, 5 do
+		sess_sql[#sess_sql + 1] = string.format('(%s,%s,%d,%d,%d,%d,1)',
+			db.quote(mac(1)), db.quote('busy.example'), day0 + 1000 + j, day0 + 1010 + j, 200000, 800000)
+	end
 	H.seed(file, {}, {
 		{ mac = mac(1), ip = '192.168.1.3', hostname = 'tower', first_seen = day0, last_seen = now },
 	}, targets)
@@ -270,16 +277,21 @@ H.case('W19b', 'device_detail pages busy days by display group', function()
 	H.ok(not page1.error, 'page1: ' .. tostring(page1.error))
 	H.eq(page1.paged, true, 'paged')
 	H.eq(page1.has_more, true, 'has more')
-	H.eq(#page1.sessions, 50, 'page size')
-	H.ok(page1.session_count >= 520, 'session_count')
+	H.eq(#page1.sessions, 50, 'page size = destinations')
+	H.ok(page1.session_count >= 525, 'session_count')
 	H.ok(page1.bytes_total > 0, 'day totals')
-	local first = page1.sessions[1]
-	H.ok(first.bytes_total >= page1.sessions[50].bytes_total, 'traffic order')
-	local page2 = api.call('device_detail', {
-		mac = mac(1), day = '2026-11-15', sort = 'traffic', limit = 50, offset = 50,
+	local busy
+	for _, s in ipairs(page1.sessions) do
+		if s.display == 'busy.example' then busy = s end
+	end
+	H.ok(busy, 'busy destination on page')
+	H.eq(busy.session_count, 5, 'full session count for destination')
+	H.eq(busy.bytes_up, 1000000, 'full up sum')
+	H.eq(busy.bytes_down, 4000000, 'full down sum')
+	local kids = api.call('device_detail', {
+		mac = mac(1), day = '2026-11-15', children_of = 'busy.example',
 	}, env_for(dir, file, now))
-	H.eq(#page2.sessions, 50, 'page2 size')
-	H.ok(page2.sessions[1].display ~= first.display, 'page2 different')
+	H.eq(#kids.sessions, 5, 'expand returns each timed session')
 	H.rmrf(dir)
 end)
 

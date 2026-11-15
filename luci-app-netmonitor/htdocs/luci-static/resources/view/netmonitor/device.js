@@ -1,6 +1,7 @@
 'use strict';
 'require view';
 'require dom';
+'require ui';
 'require netmonitor.common as nm';
 'require netmonitor.topo as topo';
 
@@ -50,8 +51,9 @@ return view.extend({
 		return 'traffic';
 	},
 
-	fetchDetail: function(offset) {
-		return nm.callDetail(this.mac, this.day, this.apiSort(), this.pageSize, offset || 0, this.filter || '');
+	fetchDetail: function(offset, childrenOf) {
+		return nm.callDetail(this.mac, this.day, this.apiSort(), this.pageSize, offset || 0,
+			this.filter || '', childrenOf || '');
 	},
 
 	load: function() {
@@ -93,11 +95,36 @@ return view.extend({
 				return;
 			}
 			var prev = self.data.sessions || [];
+			var keepExpanded = self.expanded || {};
 			self.data = d;
 			self.data.sessions = prev.concat(d.sessions || []);
+			self.data.has_more = !!d.has_more;
+			self.expanded = keepExpanded;
 			self.offset = next;
 			self.update();
 		});
+	},
+
+	/* Paged rows are full day aggregates per destination; expand loads each
+	   timed session for that destination so start time matches bytes. */
+	ensureChildren: function(display) {
+		var self = this;
+		var key = String(display || '');
+		if (!key || !self.data || !self.data.paged) return Promise.resolve();
+		var row = null;
+		(self.data.sessions || []).forEach(function(r) {
+			if (!row && String(r.display) === key) row = r;
+		});
+		if (!row || (row.children && row.children.length)) return Promise.resolve();
+		if (row._loadingChildren) return row._loadingChildren;
+		row._loadingChildren = self.fetchDetail(0, key).catch(function() { return null; }).then(function(d) {
+			row._loadingChildren = null;
+			if (!d || d.error) return;
+			row.children = d.sessions || [];
+			if (self.tableBox && self.data)
+				dom.content(self.tableBox, self.renderTable(self.data));
+		});
+		return row._loadingChildren;
 	},
 
 	closeCalendar: function() {
@@ -439,68 +466,69 @@ return view.extend({
 		];
 
 		groups.forEach(function(g) {
-			var multi = g.children.length > 1;
-			var open = multi && !!self.expanded[g.key];
+			var canExpand = num(g.session_count) > 1 || g.children.length > 1;
+			var open = canExpand && !!self.expanded[g.key];
 			var toggle = null;
-			if (multi) {
+			var toggleExpand = function() {
+				if (self.expanded[g.key]) {
+					delete self.expanded[g.key];
+					dom.content(self.tableBox, self.renderTable(d));
+					return;
+				}
+				self.expanded[g.key] = true;
+				dom.content(self.tableBox, self.renderTable(d));
+				if (d.paged && !(g.children && g.children.length))
+					self.ensureChildren(g.display);
+			};
+			if (canExpand) {
 				toggle = E('button', {
 					'class': 'nm-detail-toggle',
 					'type': 'button',
 					'aria-expanded': open ? 'true' : 'false',
-					'title': open ? _('收起') : _('展开'),
+					'title': open ? _('收起') : _('展开分时会话'),
 					'click': function(ev) {
 						ev.preventDefault();
 						ev.stopPropagation();
-						if (self.expanded[g.key]) delete self.expanded[g.key];
-						else self.expanded[g.key] = true;
-						dom.content(self.tableBox, self.renderTable(d));
+						toggleExpand();
 					}
 				}, open ? '▾' : '▸');
 			}
 
 			var groupAttrs = {
-				'class': 'tr' + (multi ? ' nm-detail-group' : '') + (open ? ' nm-detail-open' : '')
+				'class': 'tr' + (canExpand ? ' nm-detail-group' : '') + (open ? ' nm-detail-open' : '')
 			};
-			if (multi) {
+			if (canExpand) {
 				groupAttrs.click = function(ev) {
 					var t = ev.target;
 					while (t && t !== ev.currentTarget) {
 						if (t.tagName === 'BUTTON') return;
 						t = t.parentNode;
 					}
-					if (self.expanded[g.key]) delete self.expanded[g.key];
-					else self.expanded[g.key] = true;
-					dom.content(self.tableBox, self.renderTable(d));
+					toggleExpand();
 				};
 			}
 			body.push(E('tr', groupAttrs, self.rowCells(g, interval, { toggle: toggle })));
 
 			if (open) {
-				g.children.forEach(function(c) {
-					body.push(E('tr', { 'class': 'tr nm-detail-child' },
-						self.rowCells(c, interval, { child: true })));
-				});
+				if (g.children && g.children.length) {
+					g.children.forEach(function(c) {
+						body.push(E('tr', { 'class': 'tr nm-detail-child' },
+							self.rowCells(c, interval, { child: true })));
+					});
+				}
+				else {
+					body.push(E('tr', { 'class': 'tr nm-detail-child' }, [
+						E('td', { 'class': 'td', 'colspan': '6' }, _('正在加载该目的地的分时会话…'))
+					]));
+				}
 			}
 		});
 
 		var wrap = [ E('table', { 'class': 'table nm-detail' }, body) ];
 		if (d.paged) {
 			wrap.push(E('p', { 'class': 'nm-note' },
-				_('已显示 %d 个目标（按当前排序分页；当天会话共约 %d 条）')
+				_('已显示 %d 个目的地（每个目的地为当天完整合计；会话共 %d 条）')
 					.format(groups.length, num(d.session_count))));
-		}
-		if (d.has_more) {
-			wrap.push(E('div', { 'class': 'nm-toolbar' }, [
-				E('button', {
-					'class': 'cbi-button cbi-button-action',
-					'type': 'button',
-					'disabled': self.loadingMore ? 'disabled' : null,
-					'click': function(ev) {
-						ev.preventDefault();
-						self.loadMore();
-					}
-				}, self.loadingMore ? _('加载中…') : _('加载更多'))
-			]));
 		}
 		return E('div', {}, wrap);
 	},
@@ -523,6 +551,19 @@ return view.extend({
 				'input': function(ev) { self.onFilterInput(ev); }
 			});
 			this.tableBox = E('div', {}, this.renderTable(d));
+			var moreBar = '';
+			if (d.has_more) {
+				moreBar = E('div', { 'class': 'nm-toolbar', 'style': 'margin: 12px 0;' }, [
+					E('button', {
+						'class': 'cbi-button cbi-button-action',
+						'type': 'button',
+						'disabled': self.loadingMore ? 'disabled' : null,
+						'click': ui.createHandlerFn(self, self.loadMore)
+					}, self.loadingMore
+						? _('加载中…')
+						: _('加载更多目的地（每页 %d 个，每个为当天完整合计）').format(num(d.limit) || self.pageSize))
+				]);
+			}
 			body = E('div', {}, [
 				E('div', { 'class': 'nm-device-head' }, [
 					E('strong', {}, dev.hostname || dev.ip || d.mac),
@@ -533,7 +574,8 @@ return view.extend({
 					topo.formatBytes(d.bytes_total || 0), topo.formatBytes(d.bytes_up || 0), topo.formatBytes(d.bytes_down || 0))) : '',
 				E('div', { 'class': 'nm-toolbar' }, [ filterIn ]),
 				this.tableBox,
-				E('p', { 'class': 'nm-note' }, _('开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话；本地 0 点会结清统计会话并重新计数（不断开真实连接）。同名目标已合并；条目多时分页加载，可点「加载更多」。')
+				moreBar,
+				E('p', { 'class': 'nm-note' }, _('开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话；本地 0 点会结清统计会话并重新计数（不断开真实连接）。列表按目的地聚合为当天完整合计；展开可看分时会话；目的地多时分页「加载更多」。')
 					.format((this.status && this.status.interval) || 5, (this.status && this.status.idle_gap) || 60))
 			]);
 		}

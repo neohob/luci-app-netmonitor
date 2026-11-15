@@ -281,6 +281,7 @@ local DETAIL_PAGE_MAX = 200
 local DETAIL_FULL_MAX = 500
 
 local function detail_order_sql(sort)
+	-- Order fully-aggregated display groups (each row = one destination, all-day).
 	if sort == 'time' then return 'started_at DESC, display ASC'
 	elseif sort == 'target' then return 'display ASC, started_at DESC'
 	elseif sort == 'up' then return 'bytes_up DESC, started_at DESC'
@@ -358,12 +359,71 @@ function M.device_detail(args, env)
 		filter_sql = string.format(' WHERE display LIKE %s OR target LIKE %s', like, like)
 	end
 
-	-- Busy days: aggregate in SQL and page by display group (avoids rpcd timeout).
+	-- Expand one destination: return every timed session for that display today.
+	local children_of = tostring(args.children_of or '')
+	if children_of ~= '' then
+		local sql = string.format([[
+SELECT target, display, source, asn_org, bytes_up, bytes_down, bytes_total,
+  duration, started_at, last_seen_at, unresolved, active
+FROM (
+  SELECT
+    s.target AS target,
+    %s AS display,
+    %s AS source,
+    CASE WHEN n.source = 'asn' THEN n.name END AS asn_org,
+    s.bytes_up AS bytes_up,
+    s.bytes_down AS bytes_down,
+    s.bytes_up + s.bytes_down AS bytes_total,
+    s.last_seen_at - s.started_at AS duration,
+    s.started_at AS started_at,
+    s.last_seen_at AS last_seen_at,
+    %s AS unresolved,
+    CASE WHEN s.closed = 0 THEN 1 ELSE 0 END AS active
+  %s
+  WHERE %s
+)
+WHERE display = %s
+ORDER BY started_at DESC
+LIMIT 2000;]],
+			DETAIL_DISPLAY, DETAIL_SOURCE, DETAIL_UNRESOLVED,
+			detail_join_from(), day_where, db.quote(children_of))
+		local rows = q(path, sql)
+		local sessions = json.array()
+		for _, r in ipairs(rows) do
+			local up = tonumber(r.bytes_up) or 0
+			local down = tonumber(r.bytes_down) or 0
+			sessions[#sessions + 1] = {
+				target = r.target,
+				display = r.display,
+				source = r.source,
+				asn_org = r.asn_org,
+				bytes_up = up,
+				bytes_down = down,
+				bytes_total = up + down,
+				duration = tonumber(r.duration) or 0,
+				started_at = tonumber(r.started_at) or 0,
+				last_seen_at = tonumber(r.last_seen_at) or 0,
+				unresolved = tonumber(r.unresolved) == 1,
+				active = tonumber(r.active) == 1,
+				split = false,
+			}
+		end
+		out.sessions = sessions
+		out.has_more = false
+		out.paged = false
+		out.children_of = children_of
+		return out
+	end
+
+	-- Busy days: page by destination (display). Each returned row is a FULL
+	-- day aggregate for that destination (all its sessions summed) — never a
+	-- partial slice of one destination's sessions. Day header totals still
+	-- come from the cheap SUM above.
 	if out.session_count > DETAIL_FULL_MAX or offset > 0 or qfilter ~= '' then
 		local order = detail_order_sql(args.sort)
 		local sql = string.format([[
 SELECT display, target, source, asn_org, bytes_up, bytes_down, bytes_total,
-  duration, started_at, unresolved, active, session_count
+  duration, started_at, last_seen_at, unresolved, active, session_count
 FROM (
   SELECT
     %s AS display,
@@ -375,6 +435,7 @@ FROM (
     SUM(s.bytes_up) + SUM(s.bytes_down) AS bytes_total,
     SUM(s.last_seen_at - s.started_at) AS duration,
     MIN(s.started_at) AS started_at,
+    MAX(s.last_seen_at) AS last_seen_at,
     MIN(%s) AS unresolved,
     MAX(CASE WHEN s.closed = 0 THEN 1 ELSE 0 END) AS active,
     COUNT(*) AS session_count
@@ -391,16 +452,19 @@ LIMIT %d OFFSET %d;]],
 		if has_more then rows[#rows] = nil end
 		local sessions = json.array()
 		for _, r in ipairs(rows) do
+			local up = tonumber(r.bytes_up) or 0
+			local down = tonumber(r.bytes_down) or 0
 			sessions[#sessions + 1] = {
 				target = r.target,
 				display = r.display,
 				source = r.source,
 				asn_org = r.asn_org,
-				bytes_up = tonumber(r.bytes_up) or 0,
-				bytes_down = tonumber(r.bytes_down) or 0,
-				bytes_total = tonumber(r.bytes_total) or 0,
+				bytes_up = up,
+				bytes_down = down,
+				bytes_total = up + down,
 				duration = tonumber(r.duration) or 0,
 				started_at = tonumber(r.started_at) or 0,
+				last_seen_at = tonumber(r.last_seen_at) or 0,
 				unresolved = tonumber(r.unresolved) == 1,
 				active = tonumber(r.active) == 1,
 				session_count = tonumber(r.session_count) or 1,
@@ -618,7 +682,7 @@ M.METHODS = {
 	topology = { range = '1h' },
 	devices = { range = '1h' },
 	device_detail = { mac = 'aa:bb:cc:dd:ee:ff', day = '2026-01-01', sort = 'traffic',
-		limit = 80, offset = 0, q = '' },
+		limit = 80, offset = 0, q = '', children_of = '' },
 	get_config = json.object(),
 	estimate = { retention_value = 30, retention_unit = 'day', db_path = '/mnt/usb' },
 	check_path = { path = '/mnt/usb' },
