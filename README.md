@@ -15,7 +15,7 @@ OpenWrt / ImmortalWrt / iStoreOS LuCI 插件：按局域网设备统计「谁访
 
 菜单路径：**管控 → 流量监控**
 
-**当前版本 0.5.1** — 变更说明见 [GitHub Releases](https://github.com/neohob/luci-app-netmonitor/releases)（自然日会话结清、设备日视图不再显示「跨日」）。
+**当前版本 0.5.2** — 变更说明见 [GitHub Releases](https://github.com/neohob/luci-app-netmonitor/releases)（修复 OFFLOAD 长连接假大流量；自然日会话结清）。
 
 ## 截图
 
@@ -48,8 +48,8 @@ Release 提供 **architecture = all** 的通用包，不区分芯片（x86_64 / 
 
 ```sh
 opkg update
-opkg install ./netmonitor_0.5.1-1_all.ipk
-opkg install ./luci-app-netmonitor_0.5.1-1_all.ipk
+opkg install ./netmonitor_0.5.2-1_all.ipk
+opkg install ./luci-app-netmonitor_0.5.2-1_all.ipk
 # 可选：
 opkg install tcpdump
 opkg install libmaxminddb lua-maxminddb
@@ -60,9 +60,9 @@ opkg install libmaxminddb lua-maxminddb
 适合 iStoreOS 或习惯一键脚本的场景（内含采集器 + LuCI，与 CPU 架构无关）：
 
 ```sh
-chmod +x luci-app-netmonitor_0.5.1-1_all.run
-sh luci-app-netmonitor_0.5.1-1_all.run          # 安装 / 升级
-# sh luci-app-netmonitor_0.5.1-1_all.run uninstall  # 卸载（保留配置与数据库）
+chmod +x luci-app-netmonitor_0.5.2-1_all.run
+sh luci-app-netmonitor_0.5.2-1_all.run          # 安装 / 升级
+# sh luci-app-netmonitor_0.5.2-1_all.run uninstall  # 卸载（保留配置与数据库）
 ```
 
 装完刷新 LuCI，进入 **管控 → 流量监控**。建议在设置里把存储目录改到外置磁盘，避免长期写闪存。设置中可「立即更新服务网段」与「立即更新 ASN 数据库」。
@@ -97,7 +97,7 @@ export GOOP_HOST=root@192.168.1.1
 
 - 基于 `nf_conntrack` 字节计数采样（默认 5s），会话起止为约略值；监控「会话」≠ 单条 TCP 长连接（`idle_gap` 内有字节即续上）
 - 本地日历 **0 点**会结清统计会话并重新计数，**不断开**真实连接；日明细按所选自然日汇总
-- 开启防火墙 **flow offloading** 时，被卸载连接可能统计不全（界面会提示）
+- 开启防火墙 **flow offloading** 时，被卸载连接可能统计不全（界面会提示）；0.5.2 起避免 OFFLOAD 长连接被整段重算成假大流量
 - 目标名优先级：DNS → SNI / HTTP Host → 云/CDN 服务网段 → IP（+ ASN 标签）→ 原始 IP
 - 服务网段来自 [metowolf/iplist](https://github.com/metowolf/iplist) 与 [disposable/cloud-ip-ranges](https://github.com/disposable/cloud-ip-ranges)
 - ASN 使用独立的 GeoLite2-ASN（或兼容 MMDB），不读取 PassWall / MosDNS 的 `geoip.dat`

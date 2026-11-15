@@ -63,21 +63,37 @@ function M.read(path)
 	return text
 end
 
--- Compare against the previous snapshot { [key] = {orig=, reply=} }.
--- A counter that went backwards means the tuple was reused by a new flow.
+-- Polls a vanished flow keeps its baseline. /proc/net/nf_conntrack reads are
+-- not atomic (offloaded long-lived flows drop out of single reads); without
+-- the baseline a reappearing flow would count its whole lifetime as a delta.
+M.MISS_GRACE = 120
+
+-- Compare against the previous snapshot { [key] = {orig=, reply=, miss=} }.
+-- Only keys never seen before contribute their absolute counters. A counter
+-- that went backwards rebases with zero delta rather than recounting.
 function M.deltas(prev, entries)
 	local snap, out = {}, {}
 	for _, e in ipairs(entries) do
-		if e.has_bytes then
+		if e.has_bytes and not snap[e.key] then
 			local p = prev and prev[e.key]
 			local d_orig, d_reply = e.orig.bytes, e.reply.bytes
 			if p and e.orig.bytes >= p.orig and e.reply.bytes >= p.reply then
 				d_orig = e.orig.bytes - p.orig
 				d_reply = e.reply.bytes - p.reply
+			elseif p then
+				d_orig, d_reply = 0, 0
 			end
 			snap[e.key] = { orig = e.orig.bytes, reply = e.reply.bytes }
 			if d_orig > 0 or d_reply > 0 then
 				out[#out + 1] = { entry = e, d_orig = d_orig, d_reply = d_reply }
+			end
+		end
+	end
+	for k, p in pairs(prev or {}) do
+		if not snap[k] then
+			local miss = (p.miss or 0) + 1
+			if miss <= M.MISS_GRACE then
+				snap[k] = { orig = p.orig, reply = p.reply, miss = miss }
 			end
 		end
 	end

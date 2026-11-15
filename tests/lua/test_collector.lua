@@ -324,3 +324,31 @@ H.case('W9', 'conntrack without byte fields -> degraded, no fabricated bytes', f
 	H.rmrf(dir)
 	local _ = entries
 end)
+
+H.case('W9b', 'long-lived flow missing from one read is not recounted from zero', function()
+	local function line(up, down)
+		return string.format('ipv4     2 tcp      6 7440 ESTABLISHED src=192.168.100.203 dst=124.251.100.18 sport=51897 dport=443 packets=900 bytes=%d src=124.251.100.18 dst=203.0.113.2 sport=443 dport=51897 packets=800 bytes=%d [OFFLOAD] mark=0 zone=0 use=2', up, down)
+	end
+	local function poll(prev, text)
+		local snap, out = conntrack.deltas(prev, (conntrack.parse(text)))
+		local up, down = 0, 0
+		for _, d in ipairs(out) do up, down = up + d.d_orig, down + d.d_reply end
+		return snap, up, down
+	end
+	local snap, up, down = poll(nil, line(4700000, 3200000))
+	snap, up, down = poll(snap, line(4700143, 3200097))
+	H.eq(up, 143, 'keepalive up')
+	H.eq(down, 97, 'keepalive down')
+	snap = poll(snap, '')
+	snap, up, down = poll(snap, line(4700286, 3200194))
+	H.eq(up, 143, 'reappearing flow counts only the increment (up)')
+	H.eq(down, 97, 'reappearing flow counts only the increment (down)')
+	snap, up = poll(snap, line(4700429, 3200291) .. '\n' .. line(4700429, 3200291))
+	H.eq(up, 143, 'duplicate tuple in one read counted once')
+	snap, up, down = poll(snap, line(4000000, 3000000))
+	H.eq(up + down, 0, 'counter regression rebases without a delta')
+	snap, up = poll(snap, line(4000143, 3000097))
+	H.eq(up, 143, 'increments resume from rebased baseline')
+	for _ = 1, conntrack.MISS_GRACE + 1 do snap = poll(snap, '') end
+	H.eq(next(snap), nil, 'baseline dropped after grace')
+end)
