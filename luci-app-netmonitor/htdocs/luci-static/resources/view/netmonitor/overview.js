@@ -24,6 +24,8 @@ function setText(el, text) {
 return view.extend({
 	range: '1h',
 	showAll: false,
+	loadingRange: null,
+	_lastStatus: null,
 
 	load: function() {
 		nm.cssLink();
@@ -32,11 +34,28 @@ return view.extend({
 
 	fetchData: function() {
 		var self = this;
+		/* One ubus overview call = one heavy GROUP BY. Old path fired topology
+		 * and devices separately (~2×) and hit LuCI's ~20s RPC timeout on 24h. */
 		return Promise.all([
 			nm.callStatus().catch(function() { return null; }),
-			nm.callTopology(self.range).catch(function() { return null; }),
-			nm.callDevices(self.range).catch(function() { return null; })
-		]);
+			nm.callOverview(self.range).catch(function() { return null; })
+		]).then(function(res) {
+			var st = res[0], ov = res[1];
+			if (!ov) {
+				return Promise.all([
+					Promise.resolve(st),
+					nm.callTopology(self.range).catch(function() { return null; }),
+					nm.callDevices(self.range).catch(function() { return null; })
+				]);
+			}
+			if (ov.error)
+				return [ st, ov, ov ];
+			return [
+				st,
+				ov.topology || ov,
+				{ range: ov.range, since: ov.since, devices: ov.devices || [] }
+			];
+		});
 	},
 
 	pickRange: function(st) {
@@ -45,29 +64,59 @@ return view.extend({
 			this.range = allowed.indexOf('1h') >= 0 ? '1h' : allowed[allowed.length - 1];
 	},
 
+	selectRange: function(key, st) {
+		var self = this;
+		if (self.loadingRange) return;
+		if (key === self.range && !self.loadingRange) {
+			/* Still allow re-click to refresh, but show spinner. */
+		}
+		self.range = key;
+		self.loadingRange = key;
+		self.lastChipRange = null;
+		self.lastTopoKey = null;
+		self.lastGridKey = null;
+		if (self.chipBox)
+			dom.content(self.chipBox, self.renderChips(st || self._lastStatus));
+		self.refresh();
+	},
+
 	renderChips: function(st) {
 		var self = this;
 		var allowed = (st && st.allowed_ranges) || [];
 		return E('div', { 'class': 'nm-chips' }, allowed.map(function(key) {
+			var loading = self.loadingRange === key;
+			var kids = [ E('span', { 'class': 'nm-chip-label' }, _(topo.rangeLabel(key))) ];
+			if (loading)
+				kids.push(E('span', { 'class': 'nm-chip-spin', 'aria-hidden': 'true' }));
 			return E('button', {
-				'class': 'nm-chip' + (key === self.range ? ' active' : ''),
-				'click': function() { self.range = key; self.refresh(); }
-			}, [ _(topo.rangeLabel(key)) ]);
+				'class': 'nm-chip'
+					+ (key === self.range ? ' active' : '')
+					+ (loading ? ' nm-chip-loading' : ''),
+				'disabled': self.loadingRange && !loading ? 'disabled' : null,
+				'click': function(ev) {
+					ev.preventDefault();
+					self.selectRange(key, st);
+				}
+			}, kids);
 		}));
 	},
 
 	renderCapacity: function(st, t) {
 		var parts = [];
+		if (st && st.db_bytes != null)
+			parts.push(_('数据已用 %s').format(topo.formatBytes(st.db_bytes)));
 		if (t && t.storage) {
-			parts.push(_('本范围约 %s 条记录，约占 %s').format(t.storage.range_rows, topo.formatBytes(t.storage.range_bytes)));
+			parts.push(_('本范围约 %s 条 · %s').format(t.storage.range_rows, topo.formatBytes(t.storage.range_bytes)));
 		}
-		if (st && st.db_bytes != null) parts.push(_('数据库 %s').format(topo.formatBytes(st.db_bytes)));
-		if (st && st.disk && st.disk.free != null) parts.push(_('剩余空间 %s').format(topo.formatBytes(st.disk.free)));
+		if (st && st.disk && st.disk.free != null)
+			parts.push(_('盘剩余 %s').format(topo.formatBytes(st.disk.free)));
 		if (st && st.retention_value) {
 			var ul = (nm.UNIT_LABELS && nm.UNIT_LABELS[st.retention_unit]) || st.retention_unit;
 			parts.push(_('保留 %s %s').format(st.retention_value, _(ul)));
 		}
-		return E('div', { 'class': 'nm-capacity' }, parts.join(' · '));
+		return E('div', { 'class': 'nm-capacity' }, parts.length
+			? parts.join(' · ')
+			: _('暂无存储信息'));
 	},
 
 	nodeCard: function(n, side, slotCount) {
@@ -370,13 +419,17 @@ return view.extend({
 
 	update: function(res) {
 		var st = res[0], t = res[1], d = res[2];
+		this._lastStatus = st;
 		this.pickRange(st);
 		this.ensureShell();
 		dom.content(this.bannerBox, nm.statusBanners(st));
-		if (this.lastChipRange !== this.range || this.lastAllowed !== JSON.stringify((st && st.allowed_ranges) || [])) {
+		var allowedKey = JSON.stringify((st && st.allowed_ranges) || []);
+		if (this.loadingRange
+			|| this.lastChipRange !== this.range
+			|| this.lastAllowed !== allowedKey) {
 			dom.content(this.chipBox, this.renderChips(st));
 			this.lastChipRange = this.range;
-			this.lastAllowed = JSON.stringify((st && st.allowed_ranges) || []);
+			this.lastAllowed = allowedKey;
 		}
 		dom.content(this.capBox, this.renderCapacity(st, t));
 		this.updateTopology(t);
@@ -385,7 +438,16 @@ return view.extend({
 
 	refresh: function() {
 		var self = this;
-		return this.fetchData().then(function(res) { self.update(res); });
+		return this.fetchData().then(function(res) {
+			self.loadingRange = null;
+			self.update(res);
+		}).catch(function() {
+			self.loadingRange = null;
+			if (self.chipBox && self._lastStatus) {
+				self.lastChipRange = null;
+				dom.content(self.chipBox, self.renderChips(self._lastStatus));
+			}
+		});
 	},
 
 	render: function(st) {

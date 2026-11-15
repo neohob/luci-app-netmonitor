@@ -91,6 +91,18 @@ H.case('W12', '12 devices -> devices lists all 12 sorted by traffic', function()
 	H.rmrf(dir)
 end)
 
+H.case('W12b', 'overview returns topology+devices from one scan', function()
+	local now = os.time()
+	local dir, file = grid_db(10, 10, now)
+	local ov = api.call('overview', { range = '1h' }, env_for(dir, file, now))
+	H.ok(not ov.error, 'overview: ' .. tostring(ov.error))
+	H.ok(ov.topology and ov.topology.paths, 'topology payload')
+	H.eq(#ov.topology.nodes.devices, 5, 'topo devices')
+	H.eq(#ov.devices, 10, 'device grid')
+	H.eq(ov.devices[1].mac, mac(1), 'heaviest device')
+	H.rmrf(dir)
+end)
+
 H.case('W13', 'one device, two targets -> two colors, each consistent on both legs', function()
 	local rows = {
 		{ device = 'm1', target = 'a.com', up = 100, down = 900 },
@@ -152,10 +164,12 @@ H.case('W15', 'rpcd ACL: read/write split; check_path read-only (no FS mutate)',
 	local read, write = {}, {}
 	for _, m in ipairs(a.read.ubus.netmonitor) do read[m] = true end
 	for _, m in ipairs(a.write.ubus.netmonitor) do write[m] = true end
-	for _, m in ipairs({ 'status', 'topology', 'devices', 'device_detail', 'get_config', 'estimate', 'check_path' }) do
+	for _, m in ipairs({ 'status', 'topology', 'devices', 'overview', 'device_detail',
+		'device_months', 'device_month_summary', 'get_config', 'estimate', 'check_path' }) do
 		H.ok(read[m], 'read has ' .. m)
 		H.ok(not write[m], 'write lacks ' .. m)
 	end
+
 	for _, m in ipairs({ 'set_config', 'collector', 'prepare_path', 'update_asn', 'update_service' }) do
 		H.ok(write[m], 'write has ' .. m)
 		H.ok(not read[m], 'read lacks ' .. m)
@@ -188,8 +202,9 @@ H.case('W15', 'rpcd ACL: read/write split; check_path read-only (no FS mutate)',
 	H.eq(miss.error, 'path_missing', 'path_missing without create')
 end)
 
-H.case('W16', 'retention=7d, range=30d -> rejected with error', function()
-	local now = os.time()
+H.case('W16', 'calendar-month retention: 30d rejected; today allowed (UCI days ignored)', function()
+	-- Fixed mid-month so 7d fits calendar month; UCI=7d must not be the authority.
+	local now = os.time({ year = 2026, month = 11, day = 15, hour = 12 })
 	local dir, file = grid_db(2, 2, now)
 	local env = env_for(dir, file, now)
 	env.cfg = H.cfg({ db_path = dir, retention_value = 7, retention_unit = 'day' })
@@ -197,12 +212,12 @@ H.case('W16', 'retention=7d, range=30d -> rejected with error', function()
 	H.eq(t.error, 'range_exceeds_retention', 'topology error')
 	local d = api.call('devices', { range = '30d' }, env)
 	H.eq(d.error, 'range_exceeds_retention', 'devices error')
-	local ok7 = api.call('topology', { range = '7d' }, env)
-	H.ok(not ok7.error, '7d allowed')
+	local ok_today = api.call('topology', { range = 'today' }, env)
+	H.ok(not ok_today.error, 'today allowed under calendar month')
 	local allowed = table.concat(t.allowed_ranges, ',')
 	print('    allowed_ranges=' .. allowed)
 	H.ok(not allowed:find('30d'), '30d not offered')
-	H.ok(allowed:find('7d'), '7d offered')
+	H.ok(allowed:find('today') or allowed:find('1h'), 'short ranges offered')
 	local bad = api.call('topology', { range = 'forever' }, env)
 	H.eq(bad.error, 'bad_range', 'unknown range')
 	H.rmrf(dir)

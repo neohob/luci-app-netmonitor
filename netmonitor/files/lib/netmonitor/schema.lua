@@ -1,6 +1,6 @@
 local M = {}
 
-M.VERSION = 3
+M.VERSION = 5
 
 -- Base schema (idempotent). Future ALTER steps go in M.MIGRATIONS[version].
 M.SQL = [[
@@ -46,12 +46,23 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_device_start ON sessions(device, started_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_last ON sessions(last_seen_at);
+CREATE TABLE IF NOT EXISTS monthly_traffic (
+	month TEXT NOT NULL,
+	device TEXT NOT NULL,
+	target TEXT NOT NULL,
+	display TEXT NOT NULL,
+	bytes_up INTEGER NOT NULL DEFAULT 0,
+	bytes_down INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (month, device, target)
+);
+CREATE INDEX IF NOT EXISTS idx_monthly_device_month ON monthly_traffic(device, month);
 ]]
 
 -- Per-version upgrade scripts (applied after base CREATE IF NOT EXISTS).
 -- [1] = empty: version stamp only after base schema.
 -- [2] = destination source + persistent IP→name map (v0.2 resolve).
 -- [3] = ASN display demoted to IP (org stays in ip_names); service CIDR labels.
+-- [4] = covering-ish index for range GROUP BY (device,target) on traffic_samples.
 M.MIGRATIONS = {
 	[1] = '',
 	[2] = [[
@@ -68,6 +79,22 @@ CREATE TABLE IF NOT EXISTS ip_names (
 UPDATE targets SET display = key
  WHERE source = 'asn' AND kind = 'ip'
    AND display IS NOT NULL AND display != key;
+]],
+	[4] = [[
+CREATE INDEX IF NOT EXISTS idx_samples_ts_device_target
+  ON traffic_samples(ts, device, target);
+]],
+	[5] = [[
+CREATE TABLE IF NOT EXISTS monthly_traffic (
+	month TEXT NOT NULL,
+	device TEXT NOT NULL,
+	target TEXT NOT NULL,
+	display TEXT NOT NULL,
+	bytes_up INTEGER NOT NULL DEFAULT 0,
+	bytes_down INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (month, device, target)
+);
+CREATE INDEX IF NOT EXISTS idx_monthly_device_month ON monthly_traffic(device, month);
 ]],
 }
 

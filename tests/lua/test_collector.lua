@@ -77,39 +77,41 @@ H.case('W5', 'conntrack IP without DNS answer -> target is IP, unresolved', func
 	H.rmrf(dir2)
 end)
 
-H.case('W6', 'retention=30d deletes rows aged 40d, keeps newer', function()
+H.case('W6', 'retention keeps current calendar month detail; purges older', function()
+	local tu = require 'netmonitor.timeutil'
 	local dir, file = H.new_db()
-	local now = os.time()
-	local old, new = now - 40 * 86400, now - 10 * 86400
+	local now = os.time({ year = 2026, month = 11, day = 15, hour = 12 })
+	local cur = os.time({ year = 2026, month = 11, day = 10, hour = 12 })
+	local old = os.time({ year = 2026, month = 9, day = 10, hour = 12 }) -- older than previous month
 	H.seed(file, {
 		{ 'aa:bb:cc:00:00:01', 'old.example', old, 10, 20 },
-		{ 'aa:bb:cc:00:00:01', 'new.example', new, 30, 40 },
+		{ 'aa:bb:cc:00:00:01', 'new.example', cur, 30, 40 },
 	}, {
-		{ mac = 'aa:bb:cc:00:00:01', ip = '192.168.1.10', last_seen = new },
+		{ mac = 'aa:bb:cc:00:00:01', ip = '192.168.1.10', last_seen = cur },
 		{ mac = 'aa:bb:cc:00:00:09', ip = '192.168.1.19', last_seen = old },
 	}, { { key = 'old.example' }, { key = 'new.example' } })
 	assert(db.exec(file, string.format([[
 INSERT INTO sessions VALUES ('aa:bb:cc:00:00:01','old.example',%d,%d,10,20,1);
-INSERT INTO sessions VALUES ('aa:bb:cc:00:00:01','new.example',%d,%d,30,40,1);]], old, old, new, new)))
+INSERT INTO sessions VALUES ('aa:bb:cc:00:00:01','new.example',%d,%d,30,40,1);]], old, old, cur, cur)))
 	local cfg = H.cfg({ db_path = dir, retention_value = 30, retention_unit = 'day' })
 	local ok, err, cutoff = collector.retention_pass(file, cfg, now)
 	H.ok(ok, 'retention pass: ' .. tostring(err))
+	H.eq(cutoff, tu.month_start(now), 'cutoff = month_start')
 	print(string.format('    now=%d cutoff=%d (%s)', now, cutoff, os.date('%Y-%m-%d %H:%M', cutoff)))
 	local s = db.query(file, 'SELECT target FROM traffic_samples ORDER BY target;')
 	H.eq(#s, 1, 'one sample left')
-	H.eq(s[1].target, 'new.example', 'newer kept')
+	H.eq(s[1].target, 'new.example', 'current-month kept')
 	local ss = db.query(file, 'SELECT target FROM sessions;')
 	H.eq(#ss, 1, 'one session left')
-	H.eq(ss[1].target, 'new.example', 'newer session kept')
+	H.eq(ss[1].target, 'new.example', 'current-month session kept')
 	local d = db.query(file, 'SELECT mac FROM devices;')
 	H.eq(#d, 1, 'stale device purged')
+	-- F1: older month rolled into monthly_traffic — target kept via monthly refs.
+	local mt = db.query(file, "SELECT COUNT(*) AS n FROM monthly_traffic WHERE month='2026-09';")
+	H.ok(tonumber(mt[1].n) >= 1, 'September rolled')
 	local t = db.query(file, 'SELECT key FROM targets;')
-	H.eq(#t, 1, 'orphan target purged')
-
-	local cfgm = H.cfg({ retention_value = 1, retention_unit = 'month' })
-	local tu = require 'netmonitor.timeutil'
-	local ref = os.time({ year = 2026, month = 3, day = 15, hour = 12 })
-	H.eq(os.date('%Y-%m-%d %H', tu.retention_cutoff(ref, cfgm)), '2026-02-15 12', 'calendar month cutoff')
+	H.ok(#t >= 1, 'targets remain')
+	H.eq(os.date('%Y-%m-%d %H', tu.retention_cutoff(now, cfg)), '2026-11-01 00', 'detail cutoff = month start')
 	H.rmrf(dir)
 end)
 

@@ -38,6 +38,42 @@ function M.parse_day(key)
 	return os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 0, min = 0, sec = 0 })
 end
 
+-- Calendar-month helpers (router local TZ via os.date/os.time).
+function M.month_key(ts)
+	return os.date('%Y-%m', ts)
+end
+
+function M.month_start(ts)
+	local t = os.date('*t', ts)
+	return os.time({ year = t.year, month = t.month, day = 1, hour = 0, min = 0, sec = 0 })
+end
+
+function M.next_month_start(ts)
+	local t = os.date('*t', ts)
+	return os.time({ year = t.year, month = t.month + 1, day = 1, hour = 0, min = 0, sec = 0 })
+end
+
+function M.prev_month_key(ts)
+	return M.month_key(M.month_start(ts) - 1)
+end
+
+-- Previous calendar month as [start, end) unix bounds.
+function M.prev_month_bounds(ts)
+	local cur = M.month_start(ts)
+	local start = M.month_start(cur - 1)
+	return start, cur
+end
+
+-- Strict YYYY-MM: reject month 00/13+ (no os.time normalize).
+function M.parse_month(key)
+	local y, m = tostring(key or ''):match('^(%d%d%d%d)-(%d%d)$')
+	if not y then return nil end
+	local yi, mi = tonumber(y), tonumber(m)
+	if not yi or not mi or mi < 1 or mi > 12 then return nil end
+	return os.time({ year = yi, month = mi, day = 1, hour = 0, min = 0, sec = 0 })
+end
+
+
 -- Query ranges offered as UI chips.
 M.RANGES = {
 	{ key = '15m', value = 15, unit = 'min' },
@@ -62,9 +98,11 @@ function M.range_since(key, now)
 	return nil, 'bad_range'
 end
 
+-- Detail retention = current calendar month only (UCI retention_* superseded for purge/ranges).
 function M.retention_cutoff(now, cfg)
-	return M.shift(now, cfg.retention_value, cfg.retention_unit)
+	return M.month_start(now)
 end
+
 
 -- Resolve a range against the retention window. Ranges reaching further
 -- back than retention are rejected rather than silently clamped.

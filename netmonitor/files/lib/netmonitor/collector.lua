@@ -14,8 +14,10 @@ local schema = require 'netmonitor.schema'
 local sql = require 'netmonitor.sql'
 local json = require 'netmonitor.json'
 local timeutil = require 'netmonitor.timeutil'
+local rollup = require 'netmonitor.rollup'
 
 local M = {}
+
 
 -- Production default; tests pass opts.rundir (F18: no env override).
 M.RUNDIR = '/var/run/netmonitor'
@@ -158,23 +160,33 @@ function M.build_sql(ts, devices, targets, pairs_list, changed, ip_name_rows)
 	return table.concat(out, '\n')
 end
 
+-- Safe GC only: never DELETE past-month samples/sessions here (rollup owns that).
+-- Devices/targets cleanup cannot wipe unrolled detail.
 function M.retention_sql(cutoff)
 	local c = db.quote(cutoff)
 	return table.concat({
 		'BEGIN;',
-		'DELETE FROM traffic_samples WHERE ts < ' .. c .. ';',
-		'DELETE FROM sessions WHERE last_seen_at < ' .. c .. ';',
 		'DELETE FROM devices WHERE last_seen < ' .. c .. ';',
-		'DELETE FROM targets WHERE key NOT IN (SELECT DISTINCT target FROM sessions);',
+		'DELETE FROM targets WHERE key NOT IN (SELECT DISTINCT target FROM sessions)'
+			.. ' AND key NOT IN (SELECT DISTINCT target FROM traffic_samples)'
+			.. ' AND key NOT IN (SELECT DISTINCT target FROM monthly_traffic);',
 		'COMMIT;',
 	}, '\n')
 end
 
 function M.retention_pass(db_file, cfg, now)
-	local cutoff = timeutil.retention_cutoff(now, cfg)
+	-- F1: roll ALL complete months with leftover detail (oldest-first); purge only those.
+	-- F7: rollup failure must not skip safe GC; surface distinct rollup_failed.
+	local rok, rerr = rollup.rollup_complete_months(db_file, now)
+	local cutoff = timeutil.month_start(now)
 	local ok, err = db.exec(db_file, M.retention_sql(cutoff))
+	if not rok then
+		-- GC may still succeed; return rollup error distinctly.
+		return ok, rerr or err, cutoff, { rollup_failed = true, rollup_error = rerr }
+	end
 	return ok, err, cutoff
 end
+
 
 -- One sampling cycle. Returns a result table describing what happened.
 function M.poll(ctx, now)
@@ -322,15 +334,20 @@ function M.poll(ctx, now)
 		end
 	end
 
-	-- Retention: only advance timer on success (F9).
+	-- Retention: advance timer when GC ran; surface rollup_failed separately (F7).
 	if not res.paused and not res.unavailable and not res.db_error
 		and now - ctx.last_retention >= M.RETENTION_EVERY then
-		local rok, rerr = M.retention_pass(ctx.db_file, cfg, now)
+		local rok, rerr, _, rmeta = M.retention_pass(ctx.db_file, cfg, now)
 		if rok then
 			ctx.last_retention = now
 		else
 			res.error = res.error or rerr
 			res.retention_error = true
+		end
+		if rmeta and rmeta.rollup_failed then
+			res.rollup_failed = true
+			res.rollup_error = rmeta.rollup_error or rerr
+			res.error = res.error or res.rollup_error
 		end
 	end
 	return res
@@ -353,6 +370,7 @@ function M.status_payload(ctx, res, now)
 	local warnings = {}
 	for _, w in ipairs(ctx.warnings or {}) do warnings[#warnings + 1] = w end
 	if res.retention_error then warnings[#warnings + 1] = 'retention_failed' end
+	if res.rollup_failed then warnings[#warnings + 1] = 'rollup_failed' end
 	local dh = dns.health(ctx.cfg.dns_log)
 	if not dh.ok and dh.warning then warnings[#warnings + 1] = dh.warning end
 	local ss = ctx.sni_status or sni.status(ctx.sni, ctx.cfg)

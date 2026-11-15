@@ -23,7 +23,9 @@ H.case('W18', 'luci-app-netmonitor package name + menu entry present', function(
 	H.eq(root.depends.acl[1], 'luci-app-netmonitor', 'menu gated by ACL')
 	for _, v in ipairs({ 'overview', 'settings', 'device' }) do
 		local e = menu['admin/control/netmonitor/' .. v]
-		H.ok(e and e.action.path == 'netmonitor/' .. v, 'menu ' .. v)
+		H.ok(e and e.action and e.action.path, 'menu ' .. v)
+		-- Menu path may be version-suffixed (cache bust); canonical view file must exist.
+		H.ok(tostring(e.action.path):find('^netmonitor/' .. v), 'menu path ' .. v .. ' = ' .. tostring(e.action.path))
 		H.ok(exists('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/' .. v .. '.js'), 'view ' .. v)
 	end
 	H.ok(exists('./luci-app-netmonitor/htdocs/luci-static/resources/netmonitor/topo.js'), 'topo helper')

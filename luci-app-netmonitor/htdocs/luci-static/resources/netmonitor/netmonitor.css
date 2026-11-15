@@ -10,9 +10,19 @@
 
 .nm-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0; }
 .nm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.nm-chip { padding: 3px 12px; border-radius: 999px; border: 1px solid var(--nm-border);
+.nm-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px;
+	border-radius: 999px; border: 1px solid var(--nm-border);
 	background: transparent; color: inherit; cursor: pointer; font-size: 13px; }
 .nm-chip.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+.nm-chip:disabled { opacity: .55; cursor: default; }
+.nm-chip-loading { cursor: wait; }
+.nm-chip-spin {
+	display: inline-block; width: 10px; height: 10px; box-sizing: border-box;
+	border: 1.5px solid currentColor; border-right-color: transparent;
+	border-radius: 50%; flex-shrink: 0;
+	animation: nm-spin .7s linear infinite;
+}
+@keyframes nm-spin { to { transform: rotate(360deg); } }
 .nm-capacity { font-size: 12px; color: var(--nm-muted); }
 .nm-note { font-size: 12px; color: var(--nm-muted); margin-top: 8px; }
 .nm-topo-empty { padding: 24px; text-align: center; color: var(--nm-muted); }

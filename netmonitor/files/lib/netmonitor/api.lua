@@ -10,6 +10,7 @@ local detail = require 'netmonitor.detail'
 local asn = require 'netmonitor.asn'
 local service = require 'netmonitor.service'
 local json = require 'netmonitor.json'
+local rollup = require 'netmonitor.rollup'
 
 local M = {}
 
@@ -73,9 +74,19 @@ local function resolve(env, args)
 	return since, key
 end
 
+-- Short TTL cache: overview used to call topology+devices in parallel, each
+-- scanning the same multi-hour sample range (~10s). LuCI RPC budget is ~20s.
+local pair_cache = { key = nil, at = 0, rows = nil }
+local PAIR_CACHE_TTL = 8
+
 local function pair_rows(path, since)
+	local ck = tostring(path) .. '\0' .. tostring(since)
+	local now = os.time()
+	if pair_cache.key == ck and pair_cache.rows and (now - pair_cache.at) < PAIR_CACHE_TTL then
+		return pair_cache.rows
+	end
 	-- Prefer domain/service displays; never use ASN org as the display name.
-	return q(path, string.format([[
+	local rows = q(path, string.format([[
 SELECT s.device, s.target, s.up, s.down, d.ip, d.hostname,
   COALESCE(
     CASE WHEN t.source IN ('dns','sni','http_host','service') THEN t.display END,
@@ -102,17 +113,62 @@ SELECT s.device, s.target, s.up, s.down, d.ip, d.hostname,
     CASE WHEN n2.source = 'asn' THEN n2.name END
   ) AS asn_org
 FROM (SELECT device, target, SUM(bytes_up) AS up, SUM(bytes_down) AS down
-      FROM traffic_samples WHERE ts >= %s GROUP BY device, target) s
+      FROM traffic_samples INDEXED BY idx_samples_ts_device_target
+      WHERE ts >= %s GROUP BY device, target) s
 LEFT JOIN devices d ON d.mac = s.device
 LEFT JOIN targets t ON t.key = s.target
 LEFT JOIN ip_names n ON n.ip = s.target
 LEFT JOIN ip_names n2 ON t.ip IS NOT NULL AND n2.ip = t.ip;]], db.quote(since)))
+	pair_cache.key, pair_cache.at, pair_cache.rows = ck, now, rows
+	return rows
+end
+
+local function rows_to_info(pair)
+	local rows, info = {}, { devices = {}, targets = {} }
+	for _, r in ipairs(pair) do
+		rows[#rows + 1] = { device = r.device, target = r.target,
+			up = tonumber(r.up) or 0, down = tonumber(r.down) or 0 }
+		info.devices[r.device] = { ip = r.ip, hostname = r.hostname }
+		info.targets[r.target] = { display = r.display, unresolved = tonumber(r.unresolved),
+			source = r.source or ((tonumber(r.unresolved) == 1) and 'ip' or 'dns'),
+			asn_org = r.asn_org }
+	end
+	return rows, info
+end
+
+-- Include devices with in-range last_seen even when they have zero samples (F3 / A8).
+local function devices_from_pairs(path, since, pair, live)
+	local per, top = {}, {}
+	for _, r in ipairs(pair) do
+		local p = per[r.device] or { up = 0, down = 0 }
+		local up, down = tonumber(r.up) or 0, tonumber(r.down) or 0
+		p.up, p.down = p.up + up, p.down + down
+		per[r.device] = p
+		local t = top[r.device]
+		if not t or up + down > t.bytes then
+			top[r.device] = { bytes = up + down, display = r.display or r.target }
+		end
+	end
+	local qs = db.quote(since)
+	local known = q(path, 'SELECT mac, ip, hostname, last_seen FROM devices WHERE last_seen >= '
+		.. qs .. ' OR mac IN (SELECT DISTINCT device FROM traffic_samples WHERE ts >= '
+		.. qs .. ');')
+	local rows = {}
+	for _, d in ipairs(known) do
+		local p = per[d.mac] or { up = 0, down = 0 }
+		rows[#rows + 1] = {
+			mac = d.mac, ip = d.ip, hostname = d.hostname, last_seen = d.last_seen,
+			bytes_up = p.up, bytes_down = p.down,
+			top_target = top[d.mac] and top[d.mac].display,
+		}
+	end
+	return topology.devices(rows, live)
 end
 
 local function storage_stats(path)
 	local r = q(path, 'SELECT COUNT(*) AS n FROM traffic_samples;')[1] or {}
 	local n = tonumber(r.n) or 0
-	local size = file_size(path) + file_size(path .. '-wal')
+	local size = file_size(path) + file_size(path .. '-wal') + file_size(path .. '-shm')
 	local bpr = (n > 1000) and size / n or M.DEFAULT_ROW_BYTES
 	return { rows = n, db_bytes = size, row_bytes = bpr }
 end
@@ -133,6 +189,8 @@ function M.status(args, env)
 		retention_unit = cfg.retention_unit,
 		allowed_ranges = timeutil.allowed_ranges(env.now, cfg),
 		now = env.now,
+		today = timeutil.day_key(env.now),
+		current_month = timeutil.month_key(env.now),
 		clock_unsynced = env.now < M.CLOCK_SANE_AFTER,
 		disk = st.disk,
 	}
@@ -142,7 +200,10 @@ function M.status(args, env)
 		return out
 	end
 	local exists, path = have_db(env)
-	if exists then out.db_bytes = file_size(path) + file_size(path .. '-wal') end
+	if exists then
+		-- Main DB + SQLite WAL/SHM sidecar files (actual on-disk footprint).
+		out.db_bytes = file_size(path) + file_size(path .. '-wal') + file_size(path .. '-shm')
+	end
 	if not out.disk then
 		local chk = disk.check(cfg.db_path, cfg, env.statfs)
 		if chk.total then out.disk = chk end
@@ -203,14 +264,7 @@ function M.topology(args, env)
 	local rows, info = {}, { devices = {}, targets = {} }
 	local stats
 	if exists then
-		for _, r in ipairs(pair_rows(path, since)) do
-			rows[#rows + 1] = { device = r.device, target = r.target,
-				up = tonumber(r.up) or 0, down = tonumber(r.down) or 0 }
-			info.devices[r.device] = { ip = r.ip, hostname = r.hostname }
-			info.targets[r.target] = { display = r.display, unresolved = tonumber(r.unresolved),
-				source = r.source or ((tonumber(r.unresolved) == 1) and 'ip' or 'dns'),
-				asn_org = r.asn_org }
-		end
+		rows, info = rows_to_info(pair_rows(path, since))
 		local c = q(path, 'SELECT COUNT(*) AS n FROM traffic_samples WHERE ts >= ' .. db.quote(since) .. ';')[1] or {}
 		stats = storage_stats(path)
 		stats.range_rows = tonumber(c.n) or 0
@@ -228,28 +282,40 @@ function M.devices(args, env)
 	if not since then return key end
 	local exists, path = have_db(env)
 	if not exists then return { range = key, since = since, devices = json.array() } end
-	local per, top = {}, {}
-	for _, r in ipairs(pair_rows(path, since)) do
-		local p = per[r.device] or { up = 0, down = 0 }
-		local up, down = tonumber(r.up) or 0, tonumber(r.down) or 0
-		p.up, p.down = p.up + up, p.down + down
-		per[r.device] = p
-		local t = top[r.device]
-		if not t or up + down > t.bytes then
-			top[r.device] = { bytes = up + down, display = r.display or r.target }
-		end
-	end
-	local known = q(path, 'SELECT mac, ip, hostname, last_seen FROM devices WHERE last_seen >= '
-		.. db.quote(since) .. ' OR mac IN (SELECT DISTINCT device FROM traffic_samples WHERE ts >= '
-		.. db.quote(since) .. ');')
-	local rows = {}
-	for _, d in ipairs(known) do
-		local p = per[d.mac] or { up = 0, down = 0 }
-		rows[#rows + 1] = { mac = d.mac, ip = d.ip, hostname = d.hostname, last_seen = d.last_seen,
-			bytes_up = p.up, bytes_down = p.down, top_target = top[d.mac] and top[d.mac].display }
-	end
-	local list = topology.devices(rows, live_view(M.runtime(env)))
+	local live = live_view(M.runtime(env))
+	local list = devices_from_pairs(path, since, pair_rows(path, since), live)
 	return { range = key, since = since, devices = json.array(list) }
+end
+
+-- Single heavy scan for the overview page (topology + device grid). Avoids
+-- LuCI firing two full-range GROUP BY queries that together exceed RPC timeout.
+function M.overview(args, env)
+	local since, key = resolve(env, args)
+	if not since then return key end
+	local exists, path = have_db(env)
+	local live = live_view(M.runtime(env))
+	local rows, info = {}, { devices = {}, targets = {} }
+	local stats
+	local pair = {}
+	if exists then
+		pair = pair_rows(path, since)
+		rows, info = rows_to_info(pair)
+		local c = q(path, 'SELECT COUNT(*) AS n FROM traffic_samples WHERE ts >= ' .. db.quote(since) .. ';')[1] or {}
+		stats = storage_stats(path)
+		stats.range_rows = tonumber(c.n) or 0
+		stats.range_bytes = math.floor(stats.range_rows * stats.row_bytes)
+	end
+	local topo = topology.build(rows, info, live)
+	topo.range = key
+	topo.since = since
+	topo.storage = stats
+	local list = exists and devices_from_pairs(path, since, pair, live) or {}
+	return {
+		range = key,
+		since = since,
+		topology = topo,
+		devices = json.array(list),
+	}
 end
 
 local function valid_mac(mac)
@@ -319,12 +385,17 @@ function M.device_detail(args, env)
 			t = timeutil.next_day_start(t)
 		end
 	end
+	-- Calendar chips: current calendar month only (A4).
+	local now = (env and env.now) or os.time()
+	local cur_month = timeutil.month_key(now)
 	local days = json.array()
-	for d in pairs(dayset) do days[#days + 1] = d end
+	for d in pairs(dayset) do
+		if tostring(d):sub(1, 7) == cur_month then days[#days + 1] = d end
+	end
 	table.sort(days, function(a, b) return a > b end)
 
 	-- Default to today (router local calendar); may be empty if no sessions yet.
-	local today = timeutil.day_key((env and env.now) or os.time())
+	local today = timeutil.day_key(now)
 	local day = args.day
 	if not day or day == '' then day = today end
 	local dev = q(path, 'SELECT mac, ip, hostname, first_seen, last_seen FROM devices WHERE mac = ' .. qm .. ';')[1]
@@ -332,6 +403,10 @@ function M.device_detail(args, env)
 	if not day then return out end
 	local ds = timeutil.parse_day(day)
 	if not ds then return { error = 'bad_day' } end
+	-- Reject days outside the current calendar month.
+	if timeutil.month_key(ds) ~= cur_month then
+		return { error = 'bad_day', mac = mac, days = days, day = day }
+	end
 	local de = timeutil.next_day_start(ds)
 	local qds, qde = db.quote(ds), db.quote(de)
 	local day_where = string.format('s.device = %s AND s.started_at < %s AND s.last_seen_at >= %s', qm, qde, qds)
@@ -521,6 +596,62 @@ WHERE %s;]], DETAIL_DISPLAY, DETAIL_UNRESOLVED, DETAIL_SOURCE, detail_join_from(
 	return out
 end
 
+function M.device_months(args, env)
+	args = args or {}
+	if not valid_mac(args.mac) then return { error = 'bad_mac' } end
+	local mac = args.mac:lower()
+	local exists, path = have_db(env)
+	if not exists then return { mac = mac, months = json.array() } end
+	local rows = q(path, 'SELECT DISTINCT month FROM monthly_traffic WHERE device = '
+		.. db.quote(mac) .. ' ORDER BY month DESC;')
+	local months = json.array()
+	for _, r in ipairs(rows) do months[#months + 1] = r.month end
+	return { mac = mac, months = months }
+end
+
+function M.device_month_summary(args, env)
+	args = args or {}
+	if not valid_mac(args.mac) then return { error = 'bad_mac' } end
+	local month = tostring(args.month or '')
+	if not timeutil.parse_month(month) then return { error = 'bad_month' } end
+	local mac = args.mac:lower()
+	local exists, path = have_db(env)
+	if not exists then return { mac = mac, month = month, rows = json.array() } end
+	local other = rollup.OTHER_TARGET
+	local rows = q(path, string.format([[
+SELECT target, display, bytes_up, bytes_down,
+  (bytes_up + bytes_down) AS bytes_total
+FROM monthly_traffic
+WHERE device = %s AND month = %s
+ORDER BY
+  CASE WHEN target = %s THEN 1 ELSE 0 END ASC,
+  (bytes_up + bytes_down) DESC,
+  target ASC;]], db.quote(mac), db.quote(month), db.quote(other)))
+	local out = json.array()
+	local up_t, down_t = 0, 0
+	for _, r in ipairs(rows) do
+		local up = tonumber(r.bytes_up) or 0
+		local down = tonumber(r.bytes_down) or 0
+		up_t, down_t = up_t + up, down_t + down
+		out[#out + 1] = {
+			target = r.target,
+			display = r.display,
+			bytes_up = up,
+			bytes_down = down,
+			bytes_total = up + down,
+			other = r.target == other,
+		}
+	end
+	return {
+		mac = mac,
+		month = month,
+		rows = out,
+		bytes_up = up_t,
+		bytes_down = down_t,
+		bytes_total = up_t + down_t,
+	}
+end
+
 function M.get_config(args, env)
 	local c = {}
 	for k in pairs(config.SETTABLE) do c[k] = env.cfg[k] end
@@ -533,16 +664,24 @@ function M.get_config(args, env)
 	return c
 end
 
--- Disk-use estimate for a retention window, from observed row rate when
--- the DB has history, else a conservative default.
+
+-- Disk-use estimate for detail retention = current calendar month (UCI
+-- retention_* no longer change the purge window; args kept for API compat).
 function M.estimate(args, env)
 	args = args or {}
 	local cfg = {}
 	for k, v in pairs(env.cfg) do cfg[k] = v end
-	cfg.retention_value = tonumber(args.retention_value) or cfg.retention_value
-	cfg.retention_unit = args.retention_unit or cfg.retention_unit
-	if not timeutil.UNITS[cfg.retention_unit] then return { error = 'bad_retention_unit' } end
-	local seconds = env.now - timeutil.retention_cutoff(env.now, cfg)
+	-- Legacy args accepted for API compat; they do not change calendar-month cutoff.
+	if args.retention_unit then
+		if not timeutil.UNITS[args.retention_unit] then return { error = 'bad_retention_unit' } end
+		cfg.retention_unit = args.retention_unit
+	end
+	if args.retention_value ~= nil then
+		cfg.retention_value = tonumber(args.retention_value) or cfg.retention_value
+	end
+	local cutoff = timeutil.retention_cutoff(env.now, cfg) -- month_start
+	-- Estimate a full calendar month of detail (not "elapsed so far" / not UCI days).
+	local month_secs = timeutil.next_month_start(env.now) - cutoff
 	local rows_per_day, row_bytes, observed = M.DEFAULT_ROWS_PER_DAY, M.DEFAULT_ROW_BYTES, false
 	local exists, path = have_db(env)
 	if exists then
@@ -556,9 +695,15 @@ function M.estimate(args, env)
 			observed = true
 		end
 	end
-	local est = math.floor(rows_per_day * row_bytes * seconds / 86400)
-	local out = { retention_seconds = seconds, rows_per_day = math.floor(rows_per_day),
-		row_bytes = math.floor(row_bytes), estimated_bytes = est, observed = observed }
+	local est = math.floor(rows_per_day * row_bytes * month_secs / 86400)
+	local out = {
+		retention_seconds = month_secs,
+		detail_retention = 'calendar_month',
+		rows_per_day = math.floor(rows_per_day),
+		row_bytes = math.floor(row_bytes),
+		estimated_bytes = est,
+		observed = observed,
+	}
 	local dir = args.db_path or cfg.db_path
 	if dir and dir ~= '' then
 		local chk = disk.check(dir, cfg, env.statfs)
@@ -618,22 +763,10 @@ function M.set_config(args, env)
 		for _, w in ipairs(v.warnings) do out.warnings[#out.warnings + 1] = w end
 	end
 
-	local old_cut = timeutil.retention_cutoff(env.now, env.cfg)
-	local new_cut = timeutil.retention_cutoff(env.now, cfg)
-	if new_cut > old_cut then
-		local exists, path = have_db(env)
-		local pending = 0
-		if exists then
-			local r = q(path, 'SELECT COUNT(*) AS n FROM traffic_samples WHERE ts < ' .. db.quote(new_cut) .. ';')[1]
-			pending = tonumber(r and r.n) or 0
-		end
-		if pending > 0 and not confirm then
-			return { ok = false, need_confirm = true, pending_delete_rows = pending,
-				estimate = M.estimate({ retention_value = cfg.retention_value,
-					retention_unit = cfg.retention_unit }, env) }
-		end
-		out.pending_delete_rows = pending
-	end
+	-- Detail purge is calendar-month only; UCI retention_* no longer shortens
+	-- the cutoff, so "shorten retention" confirm against rolling days is gone (F2).
+	local _ = confirm -- accepted for API compat; unused under calendar-month retention
+	out.detail_retention = 'calendar_month'
 
 	local saver = env.saver or config.save
 	saver(cfg)
@@ -681,8 +814,11 @@ M.METHODS = {
 	status = json.object(),
 	topology = { range = '1h' },
 	devices = { range = '1h' },
+	overview = { range = '1h' },
 	device_detail = { mac = 'aa:bb:cc:dd:ee:ff', day = '2026-01-01', sort = 'traffic',
 		limit = 80, offset = 0, q = '', children_of = '' },
+	device_months = { mac = 'aa:bb:cc:dd:ee:ff' },
+	device_month_summary = { mac = 'aa:bb:cc:dd:ee:ff', month = '2026-10' },
 	get_config = json.object(),
 	estimate = { retention_value = 30, retention_unit = 'day', db_path = '/mnt/usb' },
 	check_path = { path = '/mnt/usb' },

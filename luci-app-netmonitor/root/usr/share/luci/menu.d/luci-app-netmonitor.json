@@ -24,7 +24,7 @@
 		"order": 10,
 		"action": {
 			"type": "view",
-			"path": "netmonitor/overview"
+			"path": "netmonitor/overview_055"
 		}
 	},
 	"admin/control/netmonitor/settings": {
@@ -39,7 +39,7 @@
 		"order": 30,
 		"action": {
 			"type": "view",
-			"path": "netmonitor/device_054"
+			"path": "netmonitor/device_06x"
 		}
 	}
 }

@@ -6,9 +6,15 @@
 var callStatus = rpc.declare({ object: 'netmonitor', method: 'status' });
 var callTopology = rpc.declare({ object: 'netmonitor', method: 'topology', params: [ 'range' ] });
 var callDevices = rpc.declare({ object: 'netmonitor', method: 'devices', params: [ 'range' ] });
+var callOverview = rpc.declare({ object: 'netmonitor', method: 'overview', params: [ 'range' ] });
 var callDetail = rpc.declare({ object: 'netmonitor', method: 'device_detail',
 	params: [ 'mac', 'day', 'sort', 'limit', 'offset', 'q', 'children_of' ] });
+var callDeviceMonths = rpc.declare({ object: 'netmonitor', method: 'device_months',
+	params: [ 'mac' ] });
+var callDeviceMonthSummary = rpc.declare({ object: 'netmonitor', method: 'device_month_summary',
+	params: [ 'mac', 'month' ] });
 var callGetConfig = rpc.declare({ object: 'netmonitor', method: 'get_config' });
+
 var callSetConfig = rpc.declare({ object: 'netmonitor', method: 'set_config',
 	params: [ 'db_path', 'interval', 'idle_gap', 'retention_value', 'retention_unit', 'enabled',
 		'sni_enable', 'asn_enable', 'asn_auto_update', 'asn_week_time', 'asn_day_time',
@@ -41,17 +47,19 @@ var ERRORS = {
 	bad_retention: '保留期限必须是正整数',
 	bad_retention_unit: '保留期限单位无效',
 	bad_mac: '设备地址无效',
+	bad_month: '月份无效',
 	db_error: '数据库读写失败，已暂停采集写入',
 	db_init_failed: '数据库初始化失败',
 	internal: '内部错误'
 };
+
 
 function errorText(code) {
 	return _(ERRORS[code] || String(code));
 }
 
 function cssLink() {
-	var href = L.resource('netmonitor/netmonitor.css') + '?v=0.5.4-destpage';
+	var href = L.resource('netmonitor/netmonitor.css') + '?v=0.6.0';
 	var existing = document.querySelector('link[data-netmonitor]');
 	if (existing) {
 		if (existing.getAttribute('href') !== href) existing.setAttribute('href', href);
@@ -157,7 +165,10 @@ return baseclass.extend({
 	callStatus: callStatus,
 	callTopology: callTopology,
 	callDevices: callDevices,
+	callOverview: callOverview,
 	callDetail: callDetail,
+	callDeviceMonths: callDeviceMonths,
+	callDeviceMonthSummary: callDeviceMonthSummary,
 	callGetConfig: callGetConfig,
 	callSetConfig: callSetConfig,
 	callEstimate: callEstimate,

@@ -18,9 +18,23 @@ function pad2(n) {
 	return (n < 10 ? '0' : '') + n;
 }
 
-function todayKey() {
+/* Browser-local fallback only; prefer router keys from status (F4). */
+function todayKeyBrowser() {
 	var t = new Date();
 	return t.getFullYear() + '-' + pad2(t.getMonth() + 1) + '-' + pad2(t.getDate());
+}
+
+function currentMonthKeyBrowser() {
+	var t = new Date();
+	return t.getFullYear() + '-' + pad2(t.getMonth() + 1);
+}
+
+/* Clamp day to router's current calendar month. routerToday/routerMonth from status. */
+function clampDayToRouterMonth(day, routerToday, routerMonth) {
+	var today = routerToday || todayKeyBrowser();
+	var curM = routerMonth || (today && String(today).slice(0, 7)) || currentMonthKeyBrowser();
+	if (!day || String(day).slice(0, 7) !== curM) return today;
+	return day;
 }
 
 function parseDayKey(key) {
@@ -40,6 +54,11 @@ return view.extend({
 	calOpen: false,
 	calYear: null,
 	calMonth: null,
+	pastOpen: false,
+	pastMonths: null,
+	pastMonth: null,
+	pastSummary: null,
+	pastLoading: false,
 
 	apiSort: function() {
 		var k = this.sortKey;
@@ -59,17 +78,57 @@ return view.extend({
 	load: function() {
 		nm.cssLink();
 		this.mac = param('mac');
-		this.day = param('day') || todayKey();
+		this.day = param('day') || null;
 		this.expanded = {};
 		this.offset = 0;
-		var t = parseDayKey(this.day) || parseDayKey(todayKey());
-		this.calYear = t.y;
-		this.calMonth = t.m;
+		this.pastOpen = false;
+		this.pastMonths = null;
+		this.pastMonth = null;
+		this.pastSummary = null;
 		var self = this;
-		return Promise.all([
-			nm.callStatus().catch(function() { return null; }),
-			this.mac ? self.fetchDetail(0).catch(function() { return null; }) : Promise.resolve(null)
-		]);
+		/* Fetch status first so calendar clamp uses router clock (F4). */
+		return nm.callStatus().catch(function() { return null; }).then(function(st) {
+			self.status = st;
+			self.routerToday = (st && st.today) || todayKeyBrowser();
+			self.routerMonth = (st && st.current_month) || String(self.routerToday).slice(0, 7);
+			self.day = clampDayToRouterMonth(self.day, self.routerToday, self.routerMonth);
+			var t = parseDayKey(self.day) || parseDayKey(self.routerToday);
+			self.calYear = t.y;
+			self.calMonth = t.m;
+			if (!self.mac) return [ st, null ];
+			return self.fetchDetail(0).catch(function() { return null; }).then(function(d) {
+				return [ st, d ];
+			});
+		});
+	},
+
+	loadPastMonths: function() {
+		var self = this;
+		if (!self.mac) return Promise.resolve();
+		self.pastLoading = true;
+		self.update();
+		return nm.callDeviceMonths(self.mac).catch(function() { return null; }).then(function(r) {
+			self.pastLoading = false;
+			self.pastMonths = (r && r.months) || [];
+			if (!self.pastMonth && self.pastMonths.length)
+				self.pastMonth = self.pastMonths[0];
+			self.update();
+			if (self.pastMonth)
+				return self.loadPastSummary(self.pastMonth);
+		});
+	},
+
+	loadPastSummary: function(month) {
+		var self = this;
+		if (!self.mac || !month) return Promise.resolve();
+		self.pastMonth = month;
+		self.pastLoading = true;
+		self.update();
+		return nm.callDeviceMonthSummary(self.mac, month).catch(function() { return null; }).then(function(r) {
+			self.pastLoading = false;
+			self.pastSummary = r;
+			self.update();
+		});
 	},
 
 	reload: function() {
@@ -135,7 +194,8 @@ return view.extend({
 
 	renderDayPicker: function(d) {
 		var self = this;
-		var selected = d.day || self.day || todayKey();
+		var routerToday = self.routerToday || (self.status && self.status.today) || todayKeyBrowser();
+		var selected = d.day || self.day || routerToday;
 		var has = {};
 		(d.days || []).forEach(function(day) { has[day] = true; });
 
@@ -155,33 +215,19 @@ return view.extend({
 		if (!self.calOpen)
 			return E('div', { 'class': 'nm-day-wrap' }, [ btn ]);
 
+		/* Lock picker to router current calendar month (detail retention, F4). */
+		var cur = parseDayKey(routerToday);
+		self.calYear = cur.y;
+		self.calMonth = cur.m;
 		var y = self.calYear, m = self.calMonth;
 		var first = new Date(y, m - 1, 1);
 		var startPad = first.getDay(); /* 0=Sun */
 		var daysInMonth = new Date(y, m, 0).getDate();
-		var today = todayKey();
+		var today = routerToday;
 		var weekdays = [ _('日'), _('一'), _('二'), _('三'), _('四'), _('五'), _('六') ];
 
 		var head = E('div', { 'class': 'nm-cal-head' }, [
-			E('button', {
-				'class': 'nm-cal-nav', 'type': 'button', 'title': _('上个月'),
-				'click': function(ev) {
-					ev.preventDefault(); ev.stopPropagation();
-					self.calMonth -= 1;
-					if (self.calMonth < 1) { self.calMonth = 12; self.calYear -= 1; }
-					self.update();
-				}
-			}, '‹'),
-			E('span', { 'class': 'nm-cal-title' }, y + '-' + pad2(m)),
-			E('button', {
-				'class': 'nm-cal-nav', 'type': 'button', 'title': _('下个月'),
-				'click': function(ev) {
-					ev.preventDefault(); ev.stopPropagation();
-					self.calMonth += 1;
-					if (self.calMonth > 12) { self.calMonth = 1; self.calYear += 1; }
-					self.update();
-				}
-			}, '›'),
+			E('span', { 'class': 'nm-cal-title' }, y + '-' + pad2(m) + '（' + _('当月明细') + '）'),
 			E('button', {
 				'class': 'nm-cal-close', 'type': 'button', 'title': _('关闭'),
 				'click': function(ev) {
@@ -267,6 +313,76 @@ return view.extend({
 		});
 
 		return E('div', { 'class': 'nm-day-wrap' }, [ backdrop, btn, panel ]);
+	},
+
+	renderPastMonths: function() {
+		var self = this;
+		var toggle = E('button', {
+			'class': 'cbi-button',
+			'type': 'button',
+			'click': ui.createHandlerFn(self, function() {
+				self.pastOpen = !self.pastOpen;
+				if (self.pastOpen && !self.pastMonths)
+					return self.loadPastMonths();
+				self.update();
+			})
+		}, self.pastOpen ? _('收起往月汇总') : _('往月汇总'));
+
+		if (!self.pastOpen)
+			return E('div', { 'class': 'nm-toolbar', 'style': 'margin: 8px 0;' }, [ toggle ]);
+
+		var body = [ toggle ];
+		if (self.pastLoading)
+			body.push(E('p', { 'class': 'nm-note' }, _('加载中…')));
+		else if (!self.pastMonths || !self.pastMonths.length)
+			body.push(E('p', { 'class': 'nm-note' }, _('暂无往月汇总（跨月后会自动生成 Top100）')));
+		else {
+			var opts = self.pastMonths.map(function(m) {
+				return E('option', {
+					'value': m,
+					'selected': m === self.pastMonth ? '' : null
+				}, m);
+			});
+			var sel = E('select', {
+				'class': 'cbi-input-select',
+				'change': function(ev) {
+					self.loadPastSummary(ev.target.value);
+				}
+			}, opts);
+			body.push(E('div', { 'class': 'nm-toolbar' }, [
+				E('label', {}, _('选择月份') + ' '), sel
+			]));
+			var sum = self.pastSummary;
+			if (sum && sum.error) {
+				body.push(E('p', { 'class': 'nm-note' }, nm.errorText(sum.error)));
+			}
+			else if (sum && sum.rows) {
+				body.push(E('div', { 'class': 'nm-capacity' },
+					_('%s 合计 %s（↑%s ↓%s）；往月仅 Top100 +「其他」，无分时会话')
+						.format(sum.month || self.pastMonth,
+							topo.formatBytes(sum.bytes_total || 0),
+							topo.formatBytes(sum.bytes_up || 0),
+							topo.formatBytes(sum.bytes_down || 0))));
+				var rows = [
+					E('tr', { 'class': 'tr table-titles' }, [
+						E('th', { 'class': 'th' }, _('目标')),
+						E('th', { 'class': 'th' }, _('上传')),
+						E('th', { 'class': 'th' }, _('下载')),
+						E('th', { 'class': 'th' }, _('合计'))
+					])
+				];
+				(sum.rows || []).forEach(function(r) {
+					rows.push(E('tr', { 'class': 'tr' }, [
+						E('td', { 'class': 'td' }, r.display || r.target),
+						E('td', { 'class': 'td' }, topo.formatBytes(r.bytes_up)),
+						E('td', { 'class': 'td' }, topo.formatBytes(r.bytes_down)),
+						E('td', { 'class': 'td' }, topo.formatBytes(r.bytes_total))
+					]));
+				});
+				body.push(E('table', { 'class': 'table nm-detail' }, rows));
+			}
+		}
+		return E('div', { 'class': 'nm-past-months', 'style': 'margin: 12px 0;' }, body);
 	},
 
 	groupSessions: function(rows) {
@@ -575,7 +691,8 @@ return view.extend({
 				E('div', { 'class': 'nm-toolbar' }, [ filterIn ]),
 				this.tableBox,
 				moreBar,
-				E('p', { 'class': 'nm-note' }, _('开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话；本地 0 点会结清统计会话并重新计数（不断开真实连接）。列表按目的地聚合为当天完整合计；展开可看分时会话；目的地多时分页「加载更多」。')
+				this.renderPastMonths(),
+				E('p', { 'class': 'nm-note' }, _('明细仅保留当月日历天；往月见下方「往月汇总」（每设备 Top100 +「其他」）。开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话；本地 0 点会结清统计会话并重新计数（不断开真实连接）。')
 					.format((this.status && this.status.interval) || 5, (this.status && this.status.idle_gap) || 60))
 			]);
 		}
