@@ -1,4 +1,4 @@
--- monthly-rollup W14–W15: LuCI cache-bust, 往月汇总 UI, settings copy, versions.
+-- monthly-rollup W14–W15/W20–W21: LuCI cache-bust, 往月汇总 UI, settings copy, versions.
 local H = require 'helper'
 
 local function exists(p)
@@ -7,15 +7,15 @@ local function exists(p)
 	return false
 end
 
-H.case('W14', 'device_06x cache-bust + 往月汇总 UI + settings current-month copy', function()
+H.case('W14', 'device_062 cache-bust + 往月汇总 UI + settings current-month copy', function()
 	local menu = H.read('./luci-app-netmonitor/root/usr/share/luci/menu.d/luci-app-netmonitor.json')
-	H.ok(menu:find('device_06'), 'menu cache-bust path device_06x')
-	H.ok(exists('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/device_06x.js')
-		or exists('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/device_060.js'),
-		'device_06x.js present')
+	H.ok(menu:find('device_062'), 'menu cache-bust path device_062')
+	H.ok(exists('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/device_062.js'),
+		'device_062.js present')
 	local view = H.read('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/device.js')
 	H.ok(view:find('往月') or view:find('device_months') or view:find('month_summary')
-		or view:find('callDeviceMonths'), '往月汇总 UI signal')
+		or view:find('callDeviceMonths') or view:find('renderPastToggle'), '往月汇总 UI signal')
+	H.ok(view:find('nm-day-past-row') or view:find('renderPastToggle'), 'past toggle beside calendar')
 	local common = H.read('./luci-app-netmonitor/htdocs/luci-static/resources/netmonitor/common.js')
 	H.ok(common:find('device_months') and common:find('device_month_summary'), 'rpc declares')
 	local settings = H.read('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/settings.js')
@@ -24,17 +24,17 @@ H.case('W14', 'device_06x cache-bust + 往月汇总 UI + settings current-month 
 	H.ok(readme:find('当月') or readme:find('往月') or readme:find('Top.?100'), 'README mentions monthly summary')
 end)
 
-H.case('W15', 'both packages PKG_VERSION 0.6.0', function()
+H.case('W15', 'both packages PKG_VERSION 0.6.1', function()
 	local nm = H.read('./netmonitor/Makefile')
 	local luci = H.read('./luci-app-netmonitor/Makefile')
-	H.ok(nm:find('PKG_VERSION:=0%.6%.0'), 'netmonitor 0.6.0')
-	H.ok(luci:find('PKG_VERSION:=0%.6%.0'), 'luci-app-netmonitor 0.6.0')
+	H.ok(nm:find('PKG_VERSION:=0%.6%.1'), 'netmonitor 0.6.1')
+	H.ok(luci:find('PKG_VERSION:=0%.6%.1'), 'luci-app-netmonitor 0.6.1')
 end)
 
 H.case('W20', 'editable views identical to versioned menu copies (no divergent forks)', function()
 	local device = H.read('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/device.js')
-	local device_x = H.read('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/device_06x.js')
-	H.eq(device, device_x, 'device.js ≡ device_06x.js')
+	local device_x = H.read('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/device_062.js')
+	H.eq(device, device_x, 'device.js ≡ device_062.js')
 	local overview = H.read('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/overview.js')
 	local overview_x = H.read('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/overview_055.js')
 	H.eq(overview, overview_x, 'overview.js ≡ overview_055.js')
@@ -43,7 +43,7 @@ H.case('W20', 'editable views identical to versioned menu copies (no divergent f
 	H.ok(not exists('./luci-app-netmonitor/htdocs/luci-static/resources/view/netmonitor/overview_054.js'),
 		'dead overview_054 removed')
 	local common = H.read('./luci-app-netmonitor/htdocs/luci-static/resources/netmonitor/common.js')
-	H.ok(common:find('%?v=0%.6%.0'), 'CSS bust 0.6.0')
+	H.ok(common:find('%?v=0%.6%.1%-calfix'), 'CSS bust 0.6.1-calfix')
 end)
 
 H.case('W21', 'calendar clamp helper uses injected router today/month (F4)', function()

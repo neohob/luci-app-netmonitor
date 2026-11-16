@@ -104,6 +104,13 @@
 .nm-back { font-size: 14px; font-weight: normal; margin-right: 8px; }
 .nm-risk { display: block; margin: 6px 0; font-weight: 600; }
 
+.nm-day-past-row {
+	display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+	margin: 6px 0 10px;
+}
+.nm-day-past-row .nm-day-wrap { margin: 0; }
+.nm-day-past-row .nm-past-toggle { margin: 0; white-space: nowrap; }
+.nm-past-months { margin: 0 0 12px; }
 .nm-day-wrap { position: relative; display: inline-block; margin: 6px 0; z-index: 30; }
 .nm-day-btn.has-data { background: rgba(59,130,246,.16); border-color: #3b82f6; }
 .nm-cal-backdrop {
@@ -112,7 +119,11 @@
 }
 .nm-cal-panel {
 	position: absolute; z-index: 40; top: calc(100% + 6px); left: 0;
-	min-width: 280px; padding: 10px 10px 12px; border-radius: 10px;
+	/* Keep on-screen on narrow phones (was overflowing past viewport). */
+	right: auto; width: min(300px, calc(100vw - 24px));
+	max-width: calc(100vw - 24px);
+	box-sizing: border-box;
+	padding: 12px; border-radius: 10px;
 	border: 1px solid var(--nm-border);
 	/* Prefer theme tokens; JS also paints live surface colors when opened */
 	background: var(--background-color-medium,
@@ -121,6 +132,12 @@
 		var(--bg-color-high, inherit))));
 	color: var(--text-color-high, var(--font-color, inherit));
 	box-shadow: 0 10px 28px rgba(0,0,0,.28);
+}
+@media (max-width: 480px) {
+	.nm-cal-panel {
+		position: fixed; left: 12px; right: 12px; top: 18%;
+		width: auto; max-width: none;
+	}
 }
 /* Argon / ImmortalWrt dark */
 body.dark .nm-cal-panel,
@@ -131,18 +148,44 @@ html.dark .nm-cal-panel,
 	background: var(--background-color, var(--dark-main-background-color, #2a2c32));
 	color: var(--text-color-high, var(--white, #e8e8e8));
 }
+/* Title left, close pinned top-right — beat Argon float:left on buttons. */
 .nm-cal-head {
-	display: grid; grid-template-columns: 28px 1fr 28px 28px; align-items: center;
-	gap: 4px; margin-bottom: 8px;
+	display: block !important;
+	position: relative;
+	width: 100%;
+	box-sizing: border-box;
+	padding-right: 36px; /* room for absolute close */
+	margin: 0 0 10px;
+	min-height: 28px;
+	float: none !important;
+	clear: both;
 }
-.nm-cal-title { font-weight: 600; font-size: 13px; text-align: center; color: inherit; }
+.nm-cal-title {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	font-weight: 600; font-size: 13px;
+	text-align: left; color: inherit; line-height: 28px;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	float: none !important;
+}
 .nm-cal-nav, .nm-cal-close {
-	width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--nm-border);
-	background: transparent; cursor: pointer; color: inherit; font-size: 16px; line-height: 1;
-	padding: 0;
+	width: 28px; height: 28px; border-radius: 6px;
+	border: 1px solid var(--nm-border);
+	background: transparent; cursor: pointer; color: inherit;
+	font-size: 16px; line-height: 26px; text-align: center;
+	padding: 0; margin: 0;
 }
 .nm-cal-nav:hover, .nm-cal-close:hover { border-color: #3b82f6; color: #3b82f6; }
-.nm-cal-close { font-size: 18px; font-weight: 600; }
+.nm-cal-close {
+	position: absolute !important;
+	top: 0; right: 0;
+	float: none !important;
+	clear: none !important;
+	display: inline-block !important;
+	font-size: 20px; font-weight: 600;
+	z-index: 2;
+}
 .nm-cal-weekdays, .nm-cal-days {
 	display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center;
 }

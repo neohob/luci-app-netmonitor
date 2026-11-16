@@ -5,6 +5,25 @@
 'require netmonitor.common as nm';
 'require netmonitor.topo as topo';
 
+/* Beat Argon float:left + stale cached CSS: pin calendar close to top-right. */
+(function forceCalHeaderCss() {
+	var id = 'nm-cal-head-fix';
+	if (document.getElementById(id)) return;
+	var s = document.createElement('style');
+	s.id = id;
+	s.textContent = [
+		'.nm-cal-head{display:block!important;position:relative;width:100%;',
+		'box-sizing:border-box;padding-right:36px;margin:0 0 10px;min-height:28px;',
+		'float:none!important;clear:both;}',
+		'.nm-cal-title{display:block;width:100%;line-height:28px;text-align:left;',
+		'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;float:none!important;}',
+		'.nm-cal-close{position:absolute!important;top:0;right:0;float:none!important;',
+		'display:inline-block!important;width:28px;height:28px;margin:0;padding:0;',
+		'z-index:2;}'
+	].join('');
+	document.head.appendChild(s);
+})();
+
 function param(name) {
 	var m = new RegExp('[?&]' + name + '=([^&]*)').exec(location.search);
 	return m ? decodeURIComponent(m[1]) : null;
@@ -315,10 +334,10 @@ return view.extend({
 		return E('div', { 'class': 'nm-day-wrap' }, [ backdrop, btn, panel ]);
 	},
 
-	renderPastMonths: function() {
+	renderPastToggle: function() {
 		var self = this;
-		var toggle = E('button', {
-			'class': 'cbi-button',
+		return E('button', {
+			'class': 'cbi-button nm-past-toggle',
 			'type': 'button',
 			'click': ui.createHandlerFn(self, function() {
 				self.pastOpen = !self.pastOpen;
@@ -326,16 +345,20 @@ return view.extend({
 					return self.loadPastMonths();
 				self.update();
 			})
-		}, self.pastOpen ? _('收起往月汇总') : _('往月汇总'));
+		}, self.pastOpen ? _('收起往月') : _('往月汇总'));
+	},
 
+	/* Expanded panel only (toggle sits beside calendar chip). */
+	renderPastPanel: function() {
+		var self = this;
 		if (!self.pastOpen)
-			return E('div', { 'class': 'nm-toolbar', 'style': 'margin: 8px 0;' }, [ toggle ]);
-
-		var body = [ toggle ];
+			return '';
+		var body = [];
 		if (self.pastLoading)
 			body.push(E('p', { 'class': 'nm-note' }, _('加载中…')));
 		else if (!self.pastMonths || !self.pastMonths.length)
-			body.push(E('p', { 'class': 'nm-note' }, _('暂无往月汇总（跨月后会自动生成 Top100）')));
+			body.push(E('p', { 'class': 'nm-note' },
+				_('还没有往月数据。进入新自然月后，上月会自动轧成 Top100 +「其他」，再点「往月汇总」选月份。日历不会翻到上月。')));
 		else {
 			var opts = self.pastMonths.map(function(m) {
 				return E('option', {
@@ -382,7 +405,7 @@ return view.extend({
 				body.push(E('table', { 'class': 'table nm-detail' }, rows));
 			}
 		}
-		return E('div', { 'class': 'nm-past-months', 'style': 'margin: 12px 0;' }, body);
+		return E('div', { 'class': 'nm-past-months' }, body);
 	},
 
 	groupSessions: function(rows) {
@@ -685,14 +708,17 @@ return view.extend({
 					E('strong', {}, dev.hostname || dev.ip || d.mac),
 					E('span', {}, ' ' + (dev.ip || '') + ' · ' + d.mac)
 				]),
-				this.renderDayPicker(d),
+				E('div', { 'class': 'nm-toolbar nm-day-past-row' }, [
+					this.renderDayPicker(d),
+					this.renderPastToggle()
+				]),
+				this.renderPastPanel(),
 				d.day ? E('div', { 'class': 'nm-capacity' }, _('%s 合计 %s（↑%s ↓%s）').format(d.day,
 					topo.formatBytes(d.bytes_total || 0), topo.formatBytes(d.bytes_up || 0), topo.formatBytes(d.bytes_down || 0))) : '',
 				E('div', { 'class': 'nm-toolbar' }, [ filterIn ]),
 				this.tableBox,
 				moreBar,
-				this.renderPastMonths(),
-				E('p', { 'class': 'nm-note' }, _('明细仅保留当月日历天；往月见下方「往月汇总」（每设备 Top100 +「其他」）。开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话；本地 0 点会结清统计会话并重新计数（不断开真实连接）。')
+				E('p', { 'class': 'nm-note' }, _('日历只选当月有数据的天；往月点日期旁「往月汇总」。开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话；本地 0 点会结清统计会话并重新计数（不断开真实连接）。')
 					.format((this.status && this.status.interval) || 5, (this.status && this.status.idle_gap) || 60))
 			]);
 		}

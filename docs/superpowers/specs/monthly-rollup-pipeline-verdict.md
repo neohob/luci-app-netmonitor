@@ -32,12 +32,17 @@
   (`netmonitor_0.6.0-1_all.ipk`, `luci-app-netmonitor_0.6.0-1_all.ipk` / `.run`, SHA256SUMS)
 - **Deploy smoke:** still **未做** (SSH BatchMode denied to `root@192.168.100.1`)
 
+## Git
+
+- Commit: `5ac6848` — `feat: calendar-month retention via monthly rollup for 0.6.0`
+- Pushed: `origin/main` (`b600db8..5ac6848`)
+- `dist/` artifacts left untracked (gitignore; same as prior releases)
+
 ## Residual (needs human / key)
 
-1. Router SSH key so `deploy-goop.sh` + B1–B5 can run  
-2. Git commit of source to match `v0.6.0` → ORDER-NM-ROLLUP-COMMIT
+1. Router SSH key so `deploy-goop.sh` + B1–B5 can run on `root@192.168.100.1`
 
 ## Pipeline status
 
-Implementation + review + host test + package/release: **complete**.  
-On-device acceptance: **blocked on SSH**.
+**CLOSED** — implementation + review + host test + package/GitHub release + source commit/push complete.  
+On-device acceptance: **blocked on SSH** (no further automated tickets).

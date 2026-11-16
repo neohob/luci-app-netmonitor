@@ -18,7 +18,7 @@ OpenWrt / ImmortalWrt / iStoreOS LuCI 插件：按局域网设备统计「谁访
 
 菜单路径：**管控 → 流量监控**
 
-**当前版本 0.6.0** — 变更说明见 [GitHub Releases](https://github.com/neohob/luci-app-netmonitor/releases)（当月明细 + 往月 Top100 汇总；目的地完整合计分页；OFFLOAD 假流量修复）。
+**当前版本 0.6.1** — 变更说明见 [GitHub Releases](https://github.com/neohob/luci-app-netmonitor/releases)（当月明细 + 往月 Top100 汇总；目的地完整合计分页；OFFLOAD 假流量修复）。
 
 ## 截图
 
@@ -51,8 +51,8 @@ Release 提供 **architecture = all** 的通用包，不区分芯片（x86_64 / 
 
 ```sh
 opkg update
-opkg install ./netmonitor_0.6.0-1_all.ipk
-opkg install ./luci-app-netmonitor_0.6.0-1_all.ipk
+opkg install ./netmonitor_0.6.1-1_all.ipk
+opkg install ./luci-app-netmonitor_0.6.1-1_all.ipk
 # 可选：
 opkg install tcpdump
 opkg install libmaxminddb lua-maxminddb
@@ -63,9 +63,9 @@ opkg install libmaxminddb lua-maxminddb
 适合 iStoreOS 或习惯一键脚本的场景（内含采集器 + LuCI，与 CPU 架构无关）：
 
 ```sh
-chmod +x luci-app-netmonitor_0.6.0-1_all.run
-sh luci-app-netmonitor_0.6.0-1_all.run          # 安装 / 升级
-# sh luci-app-netmonitor_0.6.0-1_all.run uninstall  # 卸载（保留配置与数据库）
+chmod +x luci-app-netmonitor_0.6.1-1_all.run
+sh luci-app-netmonitor_0.6.1-1_all.run          # 安装 / 升级
+# sh luci-app-netmonitor_0.6.1-1_all.run uninstall  # 卸载（保留配置与数据库）
 ```
 
 装完刷新 LuCI，进入 **管控 → 流量监控**。建议在设置里把存储目录改到外置磁盘，避免长期写闪存。设置中可「立即更新服务网段」与「立即更新 ASN 数据库」。
