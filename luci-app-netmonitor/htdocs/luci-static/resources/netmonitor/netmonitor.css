@@ -104,12 +104,35 @@
 .nm-back { font-size: 14px; font-weight: normal; margin-right: 8px; }
 .nm-risk { display: block; margin: 6px 0; font-weight: 600; }
 
-.nm-day-past-row {
+.nm-day-meta-row {
 	display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
-	margin: 6px 0 10px;
+	margin: 4px 0 10px;
 }
-.nm-day-past-row .nm-day-wrap { margin: 0; }
-.nm-day-past-row .nm-past-toggle { margin: 0; white-space: nowrap; }
+/* Date chip + 往月 chip: same pill style, normal chip gap (not glued). */
+.nm-day-cluster {
+	display: inline-flex; align-items: center; gap: 6px;
+	flex: 0 0 auto; margin: 0;
+}
+.nm-day-cluster .nm-day-wrap { margin: 0; }
+.nm-day-cluster .nm-past-toggle {
+	flex: 0 0 auto; margin: 0; white-space: nowrap;
+	/* Same language as .nm-day-btn.has-data when closed; .active when open. */
+	background: rgba(59,130,246,.16); border-color: #3b82f6;
+}
+.nm-day-meta-row .nm-day-total {
+	flex: 0 1 auto; white-space: nowrap; margin: 0;
+}
+.nm-day-meta-row .nm-filter-wrap {
+	display: inline-flex; align-items: center; gap: 6px;
+	flex: 1 1 120px; min-width: 100px; margin: 0;
+}
+.nm-day-meta-row .nm-filter-label {
+	flex: 0 0 auto; font-size: 12px; color: var(--nm-muted); white-space: nowrap;
+}
+.nm-day-meta-row .nm-filter-wrap .cbi-input-text {
+	flex: 1 1 auto; min-width: 0; width: 100%; max-width: 200px;
+	margin: 0; box-sizing: border-box;
+}
 .nm-past-months { margin: 0 0 12px; }
 .nm-day-wrap { position: relative; display: inline-block; margin: 6px 0; z-index: 30; }
 .nm-day-btn.has-data { background: rgba(59,130,246,.16); border-color: #3b82f6; }

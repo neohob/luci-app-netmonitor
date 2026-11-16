@@ -337,8 +337,9 @@ return view.extend({
 	renderPastToggle: function() {
 		var self = this;
 		return E('button', {
-			'class': 'cbi-button nm-past-toggle',
+			'class': 'nm-chip nm-past-toggle' + (self.pastOpen ? ' active' : ''),
 			'type': 'button',
+			'title': _('查看已轧账的往月 Top100（跨月后才有数据）'),
 			'click': ui.createHandlerFn(self, function() {
 				self.pastOpen = !self.pastOpen;
 				if (self.pastOpen && !self.pastMonths)
@@ -703,22 +704,34 @@ return view.extend({
 						: _('加载更多目的地（每页 %d 个，每个为当天完整合计）').format(num(d.limit) || self.pageSize))
 				]);
 			}
+			var dayTotal = d.day
+				? E('span', { 'class': 'nm-capacity nm-day-total' },
+					_('合计 %s（↑%s ↓%s）').format(
+						topo.formatBytes(d.bytes_total || 0),
+						topo.formatBytes(d.bytes_up || 0),
+						topo.formatBytes(d.bytes_down || 0)))
+				: '';
 			body = E('div', {}, [
 				E('div', { 'class': 'nm-device-head' }, [
 					E('strong', {}, dev.hostname || dev.ip || d.mac),
 					E('span', {}, ' ' + (dev.ip || '') + ' · ' + d.mac)
 				]),
-				E('div', { 'class': 'nm-toolbar nm-day-past-row' }, [
-					this.renderDayPicker(d),
-					this.renderPastToggle()
+				/* One row: [date][往月] 合计 筛选 — past toggle glued to date chip. */
+				E('div', { 'class': 'nm-toolbar nm-day-meta-row' }, [
+					E('span', { 'class': 'nm-day-cluster' }, [
+						this.renderDayPicker(d),
+						this.renderPastToggle()
+					]),
+					dayTotal,
+					E('label', { 'class': 'nm-filter-wrap' }, [
+						E('span', { 'class': 'nm-filter-label' }, _('筛选')),
+						filterIn
+					])
 				]),
 				this.renderPastPanel(),
-				d.day ? E('div', { 'class': 'nm-capacity' }, _('%s 合计 %s（↑%s ↓%s）').format(d.day,
-					topo.formatBytes(d.bytes_total || 0), topo.formatBytes(d.bytes_up || 0), topo.formatBytes(d.bytes_down || 0))) : '',
-				E('div', { 'class': 'nm-toolbar' }, [ filterIn ]),
 				this.tableBox,
 				moreBar,
-				E('p', { 'class': 'nm-note' }, _('日历只选当月有数据的天；往月点日期旁「往月汇总」。开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话；本地 0 点会结清统计会话并重新计数（不断开真实连接）。')
+				E('p', { 'class': 'nm-note' }, _('日历只选当月有数据的天；往月点日期旁蓝色「往月汇总」（跨月轧账后才有列表）。开始时间与时长根据采样推算（约），精度约为采样间隔 %d 秒；空闲超过 %d 秒视为新会话；本地 0 点会结清统计会话并重新计数（不断开真实连接）。')
 					.format((this.status && this.status.interval) || 5, (this.status && this.status.idle_gap) || 60))
 			]);
 		}
